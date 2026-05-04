@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <style>
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background: #f8fafc;
+        }
+
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: #ffffff;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+        }
+
+        .header {
+            background: linear-gradient(135deg, #7c3aed, #a855f7);
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            color: #ffffff;
+            margin: 0;
+            font-size: 24px;
+        }
+
+        .body {
+            padding: 30px;
+        }
+
+        .body p {
+            color: #475569;
+            font-size: 15px;
+            line-height: 1.6;
+            margin-bottom: 12px;
+        }
+
+        .info-box {
+            background: #f1f5f9;
+            border-radius: 12px;
+            padding: 16px;
+            margin: 16px 0;
+        }
+
+        .info-box p {
+            margin: 6px 0;
+            font-size: 14px;
+        }
+
+        .btn {
+            display: inline-block;
+            background: linear-gradient(135deg, #7c3aed, #a855f7);
+            color: #ffffff;
+            padding: 14px 32px;
+            border-radius: 10px;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 15px;
+            margin: 16px 0;
+        }
+
+        .footer {
+            background: #f1f5f9;
+            padding: 20px 30px;
+            text-align: center;
+        }
+
+        .footer p {
+            color: #94a3b8;
+            font-size: 12px;
+            margin: 4px 0;
+        }
+
+        .badge {
+            display: inline-block;
+            background: #fef3c7;
+            color: #92400e;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🆕 New Company Registration</h1>
+        </div>
+        <div class="body">
+            <p>A new company has registered on CARD-AGENT and requires license activation.</p>
+
+            <div class="info-box">
+                <p><strong>Company:</strong> {{companyName}}</p>
+                <p><strong>Admin:</strong> {{adminName}}</p>
+                <p><strong>Email:</strong> {{adminEmail}}</p>
+                <p><strong>Phone:</strong> {{default companyPhone 'N/A'}}</p>
+                <p><strong>Address:</strong> {{default companyAddress 'N/A'}}</p>
+                <p><strong>Date:</strong> {{registrationDate}}</p>
+                <p><strong>Status:</strong> <span class="badge">Pending License</span></p>
+            </div>
+
+            <a href="{{manageLicensesUrl}}" class="btn">Manage Licenses →</a>
+        </div>
+        <div class="footer">
+            <p><strong>{{appName}}</strong> - Platform Alert &copy; {{currentYear}}</p>
+        </div>
+    </div>
+</body>
+
+</html>

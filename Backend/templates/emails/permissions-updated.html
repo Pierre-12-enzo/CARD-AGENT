@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <style>
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background: #f8fafc;
+        }
+
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: #ffffff;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+        }
+
+        .header {
+            background: linear-gradient(135deg, #0F172A, #DC2626);
+            padding: 40px 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            color: #ffffff;
+            margin: 0;
+            font-size: 26px;
+        }
+
+        .body {
+            padding: 30px;
+        }
+
+        .body p {
+            color: #475569;
+            font-size: 15px;
+            line-height: 1.6;
+            margin-bottom: 12px;
+        }
+
+        .perm-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin: 16px 0;
+        }
+
+        .perm-added {
+            background: #dcfce7;
+            color: #166534;
+            padding: 6px 12px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 500;
+        }
+
+        .perm-removed {
+            background: #fef2f2;
+            color: #991b1b;
+            padding: 6px 12px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 500;
+            text-decoration: line-through;
+        }
+
+        .perm-unchanged {
+            background: #f1f5f9;
+            color: #64748b;
+            padding: 6px 12px;
+            border-radius: 8px;
+            font-size: 13px;
+        }
+
+        .org-section {
+            background: #f8fafc;
+            border-radius: 12px;
+            padding: 16px;
+            margin: 16px 0;
+            border: 1px solid #e2e8f0;
+        }
+
+        .org-section h3 {
+            margin: 0 0 8px;
+            font-size: 15px;
+            color: #0F172A;
+        }
+
+        .btn {
+            display: inline-block;
+            background: linear-gradient(135deg, #DC2626, #ef4444);
+            color: #ffffff;
+            padding: 14px 32px;
+            border-radius: 10px;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 15px;
+            margin: 16px 0;
+        }
+
+        .footer {
+            background: #f1f5f9;
+            padding: 20px 30px;
+            text-align: center;
+        }
+
+        .footer p {
+            color: #94a3b8;
+            font-size: 12px;
+            margin: 4px 0;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔑 Permissions Updated</h1>
+        </div>
+        <div class="body">
+            <p>Hello <strong>{{firstName}}</strong>,</p>
+            <p><strong>{{adminName}}</strong> has updated your permissions for <strong>{{companyName}}</strong>.</p>
+
+            {{#each permissions}}
+            <div class="org-section">
+                <h3>{{this.organizationName}}</h3>
+                <div class="perm-grid">
+                    {{#each this.changes}}
+                    {{#if this.added}}<span class="perm-added">+ {{this.name}}</span>{{/if}}
+                    {{#if this.removed}}<span class="perm-removed">- {{this.name}}</span>{{/if}}
+                    {{#if this.unchanged}}<span class="perm-unchanged">{{this.name}}</span>{{/if}}
+                    {{/each}}
+                </div>
+            </div>
+            {{/each}}
+
+            <a href="{{loginUrl}}" class="btn">Login to CARD-AGENT →</a>
+        </div>
+        <div class="footer">
+            <p><strong>{{appName}}</strong> &copy; {{currentYear}}</p>
+        </div>
+    </div>
+</body>
+
+</html>

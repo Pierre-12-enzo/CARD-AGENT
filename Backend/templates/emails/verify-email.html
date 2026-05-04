@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Verify Your Email - CAP</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333333;
+            background-color: #f4f7fc;
+            margin: 0;
+            padding: 0;
+        }
+        
+        .email-wrapper {
+            max-width: 600px;
+            margin: 20px auto;
+            background-color: #ffffff;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+        }
+        
+        .email-header {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            padding: 40px 30px;
+            text-align: center;
+        }
+        
+        .header-icon {
+            font-size: 64px;
+            margin-bottom: 20px;
+        }
+        
+        .header-title {
+            color: #ffffff;
+            font-size: 32px;
+            font-weight: 700;
+            margin: 0;
+        }
+        
+        .email-content {
+            padding: 40px 30px;
+            text-align: center;
+        }
+        
+        .greeting {
+            font-size: 24px;
+            color: #333333;
+            margin-bottom: 20px;
+        }
+        
+        .message {
+            color: #666666;
+            font-size: 16px;
+            margin-bottom: 30px;
+            max-width: 400px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        
+        .verification-box {
+            background: linear-gradient(135deg, #f9f0ff 0%, #f0e6ff 100%);
+            border-radius: 12px;
+            padding: 30px;
+            margin: 30px 0;
+            border: 2px solid #f093fb;
+        }
+        
+        .verify-btn {
+            display: inline-block;
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: #ffffff;
+            text-decoration: none;
+            padding: 18px 40px;
+            border-radius: 50px;
+            font-weight: 600;
+            font-size: 18px;
+            box-shadow: 0 4px 15px rgba(240, 147, 251, 0.4);
+            margin: 20px 0;
+        }
+        
+        .verify-link-alt {
+            background-color: #f8f9fa;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 20px 0;
+            word-break: break-all;
+            font-family: monospace;
+            font-size: 14px;
+            color: #666666;
+        }
+        
+        .expiry-notice {
+            color: #f5576c;
+            font-size: 14px;
+            font-weight: 600;
+            margin: 20px 0;
+        }
+        
+        .warning-box {
+            background-color: #fff8e6;
+            border-left: 4px solid #ffc107;
+            padding: 20px;
+            text-align: left;
+            margin: 30px 0;
+            border-radius: 8px;
+        }
+        
+        .warning-title {
+            color: #856404;
+            font-weight: 700;
+            margin-bottom: 10px;
+        }
+        
+        .warning-text {
+            color: #856404;
+            font-size: 14px;
+        }
+        
+        .help-section {
+            margin: 30px 0;
+            padding: 20px;
+            background-color: #f8f9fa;
+            border-radius: 8px;
+        }
+        
+        .help-title {
+            color: #333333;
+            margin-bottom: 15px;
+        }
+        
+        .help-links a {
+            color: #f093fb;
+            text-decoration: none;
+            margin: 0 10px;
+        }
+        
+        .email-footer {
+            background-color: #f8f9fa;
+            padding: 30px;
+            text-align: center;
+            border-top: 1px solid #eaeaea;
+        }
+        
+        @media screen and (max-width: 600px) {
+            .email-wrapper {
+                margin: 10px;
+            }
+            
+            .verify-btn {
+                display: block;
+                padding: 16px 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="email-wrapper">
+        <!-- Header -->
+        <div class="email-header">
+            <div class="header-icon">✅</div>
+            <h1 class="header-title">Verify Your Email</h1>
+        </div>
+
+        <!-- Content -->
+        <div class="email-content">
+            <h2 class="greeting">Almost there, {{firstName}}! 👋</h2>
+            
+            <p class="message">
+                Thanks for signing up for CAP! Please verify your email address to activate your account 
+                and start managing your school.
+            </p>
+
+            <!-- Verification Box -->
+            <div class="verification-box">
+                <p style="margin-bottom: 20px; color: #666666;">
+                    Click the button below to verify your email address:
+                </p>
+                
+                <a href="{{verificationUrl}}" class="verify-btn">
+                    Verify Email Address
+                </a>
+                
+                <div class="verify-link-alt">
+                    Or copy this link: <br>
+                    {{verificationUrl}}
+                </div>
+                
+                <div class="expiry-notice">
+                    ⏰ This link expires in {{expiryHours}} hours
+                </div>
+            </div>
+
+            <!-- Warning Box -->
+            <div class="warning-box">
+                <div class="warning-title">⚠️ Why verify your email?</div>
+                <div class="warning-text">
+                    • Confirm your identity and secure your account<br>
+                    • Receive important notifications about your school<br>
+                    • Reset your password if you forget it<br>
+                    • Access all CAP features
+                </div>
+            </div>
+
+            <!-- Didn't request this? -->
+            <div class="help-section">
+                <div class="help-title">❓ Didn't request this email?</div>
+                <p style="color: #666666; font-size: 14px; margin-bottom: 15px;">
+                    If you didn't create an account with CAP, you can safely ignore this email. 
+                    No action is needed.
+                </p>
+                <div class="help-links">
+                    <a href="{{contactSupportUrl}}">Contact Support</a> |
+                    <a href="{{reportAbuseUrl}}">Report Abuse</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="email-footer">
+            <div class="footer-links">
+                <a href="{{privacyPolicyUrl}}">Privacy</a> |
+                <a href="{{termsUrl}}">Terms</a> |
+                <a href="{{helpUrl}}">Help</a>
+            </div>
+            <div style="color: #999999; font-size: 12px; margin-top: 15px;">
+                CAP - Complete School Management Solution
+            </div>
+        </div>
+    </div>
+</body>
+</html>

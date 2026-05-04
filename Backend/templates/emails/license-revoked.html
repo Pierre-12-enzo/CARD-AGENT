@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <style>
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background: #f8fafc;
+        }
+
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: #ffffff;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+        }
+
+        .header {
+            background: #7f1d1d;
+            padding: 40px 30px;
+            text-align: center;
+            border-bottom: 3px solid #dc2626;
+        }
+
+        .header h1 {
+            color: #ffffff;
+            margin: 0;
+            font-size: 24px;
+        }
+
+        .body {
+            padding: 30px;
+            text-align: center;
+        }
+
+        .body p {
+            color: #475569;
+            font-size: 15px;
+            line-height: 1.6;
+            margin-bottom: 12px;
+        }
+
+        .reason-box {
+            background: #fef2f2;
+            border: 1px solid #fecaca;
+            border-radius: 12px;
+            padding: 16px;
+            margin: 20px 0;
+        }
+
+        .reason-box p {
+            color: #991b1b;
+            font-size: 14px;
+            margin: 0;
+        }
+
+        .footer {
+            background: #f1f5f9;
+            padding: 20px 30px;
+            text-align: center;
+        }
+
+        .footer p {
+            color: #94a3b8;
+            font-size: 12px;
+            margin: 4px 0;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>⚠️ License Revoked</h1>
+        </div>
+        <div class="body">
+            <p>Hello <strong>{{firstName}}</strong>,</p>
+            <p>Your CARD-AGENT license for <strong>{{companyName}}</strong> has been revoked.</p>
+
+            <div class="reason-box">
+                <p><strong>Reason:</strong> {{reason}}</p>
+            </div>
+
+            <p>Your account and data are preserved, but you will no longer be able to access the system.</p>
+            <p style="margin-top: 20px;">
+                If you believe this is a mistake, please contact support immediately:
+            </p>
+            <p>
+                <a href="mailto:{{supportEmail}}"
+                    style="color: #DC2626; font-weight: 600; font-size: 16px;">{{supportEmail}}</a>
+            </p>
+        </div>
+        <div class="footer">
+            <p><strong>{{appName}}</strong> &copy; {{currentYear}}</p>
+        </div>
+    </div>
+</body>
+
+</html>
