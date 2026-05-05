@@ -969,12 +969,25 @@ async function generateCardsWithCloudinary(student, template, coordinates, stude
       ctx.fillText(displayText, coord.x, coord.y);
     };
 
+
+    // Name is top-level
     addText(student.name, 'name', scaledCoordinates.name);
-    addText(student.class, 'class', scaledCoordinates.class);
-    addText(student.level, 'level', scaledCoordinates.level);
+
+    // Student-specific fields
+    if (student.personType === 'student') {
+      addText(student.studentDetails?.class, 'class', scaledCoordinates.class);
+      addText(student.studentDetails?.level, 'level', scaledCoordinates.level);
+      addText(student.studentDetails?.academic_year, 'academic_year', scaledCoordinates.academic_year);
+    } else {
+      // Employee-specific fields - map to available coordinates
+      addText(student.employeeDetails?.department, 'class', scaledCoordinates.class);
+      addText(student.employeeDetails?.position, 'level', scaledCoordinates.level);
+    }
+
+    // Common fields
     addText(student.gender, 'gender', scaledCoordinates.gender);
     addText(student.residence, 'residence', scaledCoordinates.residence);
-    addText(student.academic_year, 'academic_year', scaledCoordinates.academic_year);
+
 
     const frontBuffer = canvas.toBuffer('image/png');
 

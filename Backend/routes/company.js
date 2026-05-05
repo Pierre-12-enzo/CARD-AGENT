@@ -368,10 +368,13 @@ router.post('/:id/license',
                 return res.status(404).json({ success: false, error: 'Company not found' });
             }
 
-            const { maxOrganizations = 10, maxCardsPerMonth = 5000, expiresAt } = req.body;
+            const { maxOrganizations = 999, maxCardsPerMonth = 999999, expiresAt } = req.body;
 
             // Generate license key
-            const licenseKey = `CARD-${crypto.randomBytes(4).toString('hex').toUpperCase()}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
+            const crypto = require('crypto');
+            const part1 = crypto.randomBytes(2).toString('hex').toUpperCase();
+            const part2 = crypto.randomBytes(2).toString('hex').toUpperCase();
+            const licenseKey = `CARD-${part1}-${part2}`;
 
             company.license = {
                 key: licenseKey,
@@ -385,16 +388,28 @@ router.post('/:id/license',
             company.isActive = true;
             company.verifiedAt = new Date();
             await company.save();
-            await sendLicenseActivatedEmail(adminUser, company);
+
+            // 🔥 SEND LICENSE KEY TO ADMIN VIA EMAIL
+            let emailSent = false;
+            try {
+                const adminUser = await User.findById(company.adminId);
+                if (adminUser) {
+                    const { sendLicenseActivatedEmail } = require('../utilis/emailService');
+                    await sendLicenseActivatedEmail(adminUser, company);
+                    emailSent = true;
+                    console.log('✅ License key emailed to:', adminUser.email);
+                }
+            } catch (emailErr) {
+                console.error('License email failed:', emailErr);
+            }
+
+            // Audit log
+            const AuditLog = require('../models/AuditLog');
             await AuditLog.create({
                 action: 'SUBSCRIPTION_CREATED',
                 userId: req.user.id,
                 companyId: company._id,
-                details: {
-                    licenseKey,
-                    maxOrganizations,
-                    maxCardsPerMonth
-                },
+                details: { licenseKey, maxOrganizations, maxCardsPerMonth },
                 ipAddress: req.ip,
                 userAgent: req.get('User-Agent'),
                 importance: 'high'
@@ -402,12 +417,15 @@ router.post('/:id/license',
 
             res.json({
                 success: true,
-                message: 'License activated successfully',
+                message: emailSent
+                    ? 'License activated! Key has been emailed to the admin.'
+                    : 'License activated! (Email notification failed)',
                 license: {
                     key: licenseKey,
                     status: 'active',
                     maxOrganizations,
-                    maxCardsPerMonth
+                    maxCardsPerMonth,
+                    emailSentTo: emailSent ? company.email : null
                 }
             });
 

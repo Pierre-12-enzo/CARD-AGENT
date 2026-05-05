@@ -61,7 +61,7 @@ const LicenseStep = ({ onSubmit, loading }) => {
           <div>
             <h4 className="font-semibold text-slate-800 mb-1">Where to find your license key?</h4>
             <p className="text-sm text-slate-600">
-              Your license key was provided when you purchased CARD-AGENT. 
+              Your license key was provided when you purchased CARD-AGENT.
               It should be in the format: <span className="font-mono font-bold text-red-600">CARD-XXXX-XXXX</span>
             </p>
             <p className="text-sm text-slate-500 mt-2">
@@ -88,13 +88,12 @@ const LicenseStep = ({ onSubmit, loading }) => {
             value={licenseKey}
             onChange={handleLicenseChange}
             maxLength={14}
-            className={`w-full pl-12 pr-4 py-4 bg-white/90 backdrop-blur-sm border-2 rounded-2xl text-lg font-mono tracking-wider text-center focus:outline-none transition-all duration-300 ${
-              errors.licenseKey
-                ? 'border-red-300 focus:border-red-400 bg-red-50'
-                : licenseKey.length >= 10
-                  ? 'border-green-300 focus:border-red-400 bg-green-50'
-                  : 'border-gray-200 focus:border-red-400'
-            }`}
+            className={`w-full pl-12 pr-4 py-4 bg-white/90 backdrop-blur-sm border-2 rounded-2xl text-lg font-mono tracking-wider text-center focus:outline-none transition-all duration-300 ${errors.licenseKey
+              ? 'border-red-300 focus:border-red-400 bg-red-50'
+              : licenseKey.length >= 10
+                ? 'border-green-300 focus:border-red-400 bg-green-50'
+                : 'border-gray-200 focus:border-red-400'
+              }`}
             placeholder="CARD-XXXX-XXXX"
           />
           {licenseKey.length >= 10 && !errors.licenseKey && (

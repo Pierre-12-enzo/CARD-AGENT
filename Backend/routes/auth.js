@@ -1,7 +1,6 @@
 const express = require('express');
 const router = express.Router();
 const User = require('../models/User');
-const company = require('../models/Company');
 const Company = require('../models/Company');
 const RegistrationProgress = require('../models/RegistrationProgress');
 const bcrypt = require('bcryptjs');
@@ -9,25 +8,28 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const authMiddleware = require('../middleware/authMiddleware');
 const roleMiddleware = require('../middleware/roleMiddleware');
-const { sendWelcomeEmail, sendNewRegistrationAlert, sendPasswordResetEmail } = require('../utilis/emailService');
+const {
+    sendWelcomeEmail,
+    sendNewRegistrationAlert,
+    sendPasswordResetEmail
+} = require('../utilis/emailService');
 const {
     uploadAvatar,
-    uploadcompanyLogo,
+    uploadCompanyLogo,
     deleteImage
-} = require('../utilis/cloudinaryAuth'); // New simple uploader
-
-const { sendEmail } = require('../utilis/emailService'); // We'll create this
+} = require('../utilis/cloudinaryAuth');
 const multer = require('multer');
+
 const upload = multer({
     storage: multer.memoryStorage(),
-    limits: { fileSize: 5 * 1024 * 1024 } // 5MB limit
+    limits: { fileSize: 5 * 1024 * 1024 }
 });
 
 // ============================================
-// PUBLIC ROUTES (No Auth Required)
+// PUBLIC ROUTES
 // ============================================
 
-// ✅ CHECK email availability (you already have this - keep it!)
+// Check email availability
 router.get('/check-email/:email', async (req, res) => {
     try {
         const exists = await User.findOne({ email: req.params.email.toLowerCase() });
@@ -40,7 +42,7 @@ router.get('/check-email/:email', async (req, res) => {
     }
 });
 
-//check Company name
+// Check company name availability
 router.get('/check-company/:name', async (req, res) => {
     try {
         const exists = await Company.findOne({
@@ -62,30 +64,62 @@ router.get('/check-company/:name', async (req, res) => {
     }
 });
 
+// Resume registration progress
+router.get('/register/resume/:email', async (req, res) => {
+    try {
+        const progress = await RegistrationProgress.findOne({
+            email: req.params.email.toLowerCase()
+        });
+
+        if (!progress) {
+            return res.json({ success: false, progress: null });
+        }
+
+        res.json({
+            success: true,
+            progress: {
+                _id: progress._id,
+                email: progress.email,
+                step: progress.step,
+                data: progress.data
+            }
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Save registration progress
+router.post('/register/save-progress', async (req, res) => {
+    try {
+        const { email, step, data } = req.body;
+        const progress = await RegistrationProgress.findOneAndUpdate(
+            { email: email.toLowerCase() },
+            { step, data },
+            { upsert: true, new: true }
+        );
+        res.json({ success: true, progressId: progress._id });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
 
 // ============================================
-// MULTI-STEP REGISTRATION (NEW Professional Flow)
+// MULTI-STEP REGISTRATION
 // ============================================
 
-// STEP 1: Save Personal Info
+// STEP 1: Personal Info
 router.post('/register/step1/personal', async (req, res) => {
     try {
-        console.log('Request body:', req.body);
-        console.log('Request headers:', req.headers['content-type']);
         const { email, firstName, lastName, phoneNumber, password } = req.body;
 
-        // Validate
         if (!email || !firstName || !lastName || !phoneNumber || !password) {
-            console.log('All personal fields are required'); // Move this BEFORE the return
             return res.status(400).json({
                 success: false,
                 error: 'All personal fields are required'
             });
         }
 
-        console.log('Received data:', { email, firstName, lastName, phoneNumber, password: '***' }); // Better logging
-
-        // Check if email already registered
         const existingUser = await User.findOne({ email: email.toLowerCase() });
         if (existingUser) {
             return res.status(400).json({
@@ -94,7 +128,6 @@ router.post('/register/step1/personal', async (req, res) => {
             });
         }
 
-        // Check password strength
         const passwordStrength = checkPasswordStrength(password);
         if (passwordStrength.score < 50) {
             return res.status(400).json({
@@ -104,7 +137,6 @@ router.post('/register/step1/personal', async (req, res) => {
             });
         }
 
-        // Save/Update progress
         const progress = await RegistrationProgress.findOneAndUpdate(
             { email: email.toLowerCase() },
             {
@@ -113,7 +145,7 @@ router.post('/register/step1/personal', async (req, res) => {
                     firstName,
                     lastName,
                     phoneNumber,
-                    password: await bcrypt.hash(password, 10) // Hash immediately for security
+                    password: await bcrypt.hash(password, 10)
                 }
             },
             { upsert: true, new: true }
@@ -132,100 +164,171 @@ router.post('/register/step1/personal', async (req, res) => {
     }
 });
 
-// STEP 2: Save company Info (with Cloudinary for logo)
+// STEP 2: Company Info
+// STEP 2: Company Info - CREATE COMPANY + USER NOW
 router.post('/register/step2/company',
-    upload.single('logo'), // 👈 This handles the file upload
+    upload.single('logo'),
     async (req, res) => {
         try {
             console.log('📥 Step 2 - req.body:', req.body);
-            console.log('📥 Step 2 - req.file:', req.file); // This contains the uploaded file
+            console.log('📥 Step 2 - req.file:', req.file);
 
-            // Extract fields from req.body
-            const { email, companyName, companyType, companyEmail, companyPhone, province, district, sector, country } = req.body;
+            // Get email from multiple possible sources
+            const email = String(req.body.email || req.body.regEmail || '').toLowerCase();
+            const companyName = req.body.name || req.body.companyName;
+            const companyPhone = req.body.phone || req.body.companyPhone;
+            const companyEmail = req.body.companyEmail || req.body.email || email;
+            const companyWebsite = req.body.website || '';
+            const province = req.body.province || '';
+            const district = req.body.district || '';
+            const sector = req.body.sector || '';
+            const country = req.body.country || 'Rwanda';
 
-            // Handle address - it might be stringified or object
-            const addressObj = {
-                province: province || '',
-                district: district || '',
-                sector: sector || '',
-                country: country || 'Rwanda'
-            };
-
-            console.log('📧 Email received:', email);
-
-            // Validate required fields
             if (!email) {
                 return res.status(400).json({
                     success: false,
                     error: 'Email is required'
                 });
             }
-
-            if (!companyName || !companyType || !companyPhone || !companyEmail) {
+            if (!companyName || !companyPhone || !companyEmail) {
                 return res.status(400).json({
                     success: false,
-                    error: 'All company fields are required'
+                    error: 'Company name, phone, and email are required'
                 });
             }
+
+            // Get registration progress for personal data
+            const progress = await RegistrationProgress.findOne({ email });
+            if (!progress || !progress.data?.personal) {
+                return res.status(404).json({
+                    success: false,
+                    error: 'Personal information not found. Please complete step 1 first.'
+                });
+            }
+
+            const personal = progress.data.personal;
 
             // Check if company name exists
-            const existingcompany = await company.findOne({
+            const existingCompany = await Company.findOne({
                 name: { $regex: new RegExp(`^${companyName}$`, 'i') }
             });
-
-            if (existingcompany) {
+            if (existingCompany) {
                 return res.status(400).json({
                     success: false,
-                    error: 'company name already registered'
+                    error: 'Company name already registered'
                 });
             }
 
-            // Upload logo to Cloudinary if file was uploaded
+            // Upload logo
             let logoData = {};
             if (req.file) {
                 try {
-                    // Convert buffer to base64 for Cloudinary
                     const base64Image = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
-
-                    // Upload using your cloudinaryAuth utility
-                    logoData = await uploadcompanyLogo(base64Image, `company_${Date.now()}`);
+                    logoData = await uploadCompanyLogo(base64Image, `company_${Date.now()}`);
                     console.log('✅ Logo uploaded:', logoData.url);
                 } catch (uploadError) {
                     console.error('Logo upload error:', uploadError);
-                    // Continue without logo if upload fails
                 }
             }
 
-            // Update progress
-            const progress = await RegistrationProgress.findOneAndUpdate(
-                { email: email.toLowerCase() },
-                {
-                    step: 3,
-                    'data.company': {
-                        name: companyName,
-                        type: companyType,
-                        phone: companyPhone,
-                        email: companyEmail,
-                        address: addressObj,  // Save the complete address object
-                        logo: logoData
-                    }
+            // 🔥 CREATE COMPANY NOW (inactive, pending license)
+            const company = await Company.create({
+                name: companyName,
+                phone: companyPhone,
+                email: companyEmail,
+                website: companyWebsite,
+                address: { province, district, sector, country },
+                logo: logoData || {},
+                license: {
+                    key: null,
+                    status: 'pending',
+                    issuedAt: null,
+                    expiresAt: null,
+                    maxOrganizations: 10,
+                    maxCardsPerMonth: 5000
                 },
-                { new: true, upsert: true }
-            );
+                adminId: null,
+                isActive: false
+            });
+            console.log('✅ Company created (pending):', company.name);
 
-            if (!progress) {
-                return res.status(404).json({
-                    success: false,
-                    error: 'Registration session not found. Please start over.'
-                });
+            // Generate username
+            const cleanPhone = cleanPhoneNumber(personal.phoneNumber);
+            const baseUsername = `${personal.firstName.toLowerCase()}.${personal.lastName.toLowerCase()}`;
+            let username = baseUsername;
+            let counter = 1;
+            while (await User.findOne({ username })) {
+                username = `${baseUsername}${counter}`;
+                counter++;
             }
+
+            // 🔥 Check if user already exists from a previous attempt
+            let user = await User.findOne({ email });
+
+            if (user) {
+                // Update existing user
+                user.companyId = company._id;
+                user.firstName = personal.firstName;
+                user.lastName = personal.lastName;
+                user.phoneNumber = cleanPhone;
+                user.password = personal.password;
+                user.metadata.registrationStep = 2;
+                await user.save();
+                console.log('✅ User updated:', user.email);
+            } else {
+                // 🔥 CREATE USER NOW
+                user = await User.create({
+                    firstName: personal.firstName,
+                    lastName: personal.lastName,
+                    username,
+                    email,
+                    phoneNumber: cleanPhone,
+                    password: personal.password,
+                    role: 'admin',
+                    companyId: company._id,
+                    avatar: {
+                        initials: `${personal.firstName[0]}${personal.lastName[0]}`.toUpperCase()
+                    },
+                    metadata: {
+                        registrationStep: 2,
+                        registrationCompleted: false
+                    },
+                    isEmailVerified: false,
+                    isActive: true
+                });
+                console.log('✅ User created:', user.email);
+            }
+
+            // Update company with adminId
+            company.adminId = user._id;
+            await company.save();
+
+            // 🔥 Send alert to super admins
+            try {
+                await sendNewRegistrationAlert(company, user);
+            } catch (alertErr) {
+                console.error('Admin alert failed:', alertErr);
+            }
+
+            // Update registration progress
+            progress.step = 3;
+            progress.data.company = {
+                name: companyName,
+                phone: companyPhone,
+                email: companyEmail,
+                website: companyWebsite,
+                address: { province, district, sector, country },
+                logo: logoData
+            };
+            await progress.save();
 
             res.json({
                 success: true,
-                message: 'company info saved',
-                nextStep: 'plan',
+                message: 'Company registered! Now enter your license key.',
+                nextStep: 'license',
                 progressId: progress._id,
-                logoPreview: logoData.url
+                logoPreview: logoData.url,
+                companyId: company._id
             });
 
         } catch (error) {
@@ -238,7 +341,7 @@ router.post('/register/step2/company',
     }
 );
 
-// STEP 3: License Activation
+// STEP 3: License Key
 router.post('/register/step3/license', async (req, res) => {
     try {
         const { email, licenseKey } = req.body;
@@ -250,12 +353,26 @@ router.post('/register/step3/license', async (req, res) => {
             });
         }
 
+        const emailStr = String(email).toLowerCase();
+        const formattedKey = licenseKey.trim().toUpperCase();
+
+        // Find user and update company license key
+        const user = await User.findOne({ email: emailStr });
+        if (user && user.companyId) {
+            const company = await Company.findById(user.companyId);
+            if (company) {
+                company.license.key = formattedKey;
+                await company.save();
+                console.log('✅ License key saved:', formattedKey);
+            }
+        }
+
         // Update progress
         const progress = await RegistrationProgress.findOneAndUpdate(
-            { email: email.toLowerCase() },
+            { email: emailStr },
             {
                 step: 4,
-                'data.license': { licenseKey }
+                'data.license': { licenseKey: formattedKey }
             },
             { new: true }
         );
@@ -279,6 +396,7 @@ router.post('/register/step3/license', async (req, res) => {
     }
 });
 
+
 // STEP 4: Complete Registration
 router.post('/register/complete', async (req, res) => {
     try {
@@ -296,7 +414,6 @@ router.post('/register/complete', async (req, res) => {
 
         const { personal, company: companyData, license: licenseData } = progress.data;
 
-        // Validate
         if (!personal) {
             return res.status(400).json({ success: false, error: 'Personal information is missing' });
         }
@@ -307,11 +424,8 @@ router.post('/register/complete', async (req, res) => {
             return res.status(400).json({ success: false, error: 'License key is missing' });
         }
 
-        // Validate license key (super_admin creates these manually)
-        // For now, accept any key and mark as pending activation
-        const licenseStatus = 'pending'; // Super admin will activate manually
+        const licenseStatus = 'pending';
 
-        // Generate unique username
         const cleanPhone = cleanPhoneNumber(personal.phoneNumber);
         const baseUsername = `${personal.firstName.toLowerCase()}.${personal.lastName.toLowerCase()}`;
         let username = baseUsername;
@@ -326,7 +440,7 @@ router.post('/register/complete', async (req, res) => {
             name: companyData.name,
             phone: companyData.phone,
             email: companyData.email,
-            website: companyData.website,
+            website: companyData.website || '',
             address: {
                 province: companyData.address?.province || '',
                 district: companyData.address?.district || '',
@@ -338,10 +452,12 @@ router.post('/register/complete', async (req, res) => {
                 key: licenseData.licenseKey,
                 status: licenseStatus,
                 issuedAt: null,
-                expiresAt: null
+                expiresAt: null,
+                maxOrganizations: 10,
+                maxCardsPerMonth: 5000
             },
-            adminId: null, // Will update after user creation
-            isActive: false // Inactive until license validated
+            adminId: null,
+            isActive: false
         });
 
         // Create User (Admin)
@@ -376,13 +492,17 @@ router.post('/register/complete', async (req, res) => {
             { expiresIn: '24h' }
         );
 
-        // Send welcome email
+        // Send emails
         try {
             await sendWelcomeEmail(user, company);
-            await sendNewRegistrationAlert(company, user); // Alerts all super admins
-
         } catch (emailErr) {
             console.error('Welcome email failed:', emailErr);
+        }
+
+        try {
+            await sendNewRegistrationAlert(company, user);
+        } catch (alertErr) {
+            console.error('Admin alert email failed:', alertErr);
         }
 
         // Clean up
@@ -419,19 +539,15 @@ router.post('/register/complete', async (req, res) => {
     }
 });
 
-
 // ============================================
-// LOGIN (Enhanced with role-based redirect)
+// LOGIN
 // ============================================
 
-// routes/auth.js - COMPLETE LOGIN ROUTE with co-worker First Login Check
 router.post('/login', async (req, res) => {
     try {
         const { email, password } = req.body;
-
         console.log('🔐 Login attempt for:', email);
 
-        // Find user with populated company data
         const user = await User.findOne({ email: email.toLowerCase() })
             .select('+password')
             .populate('companyId', 'name logo license');
@@ -441,7 +557,6 @@ router.post('/login', async (req, res) => {
             return res.status(401).json({ success: false, error: 'Invalid credentials' });
         }
 
-        // Check if account is active
         if (!user.isActive) {
             return res.status(403).json({
                 success: false,
@@ -449,47 +564,64 @@ router.post('/login', async (req, res) => {
             });
         }
 
-        // Verify password
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) {
             console.log('❌ Password mismatch for:', email);
             return res.status(401).json({ success: false, error: 'Invalid credentials' });
         }
 
-        // ✅ CHECK FIRST LOGIN FOR co-worker ONLY
-        const isFirstLogin = user.role === 'co-worker' && user.metadata?.needsPasswordChange === true;
+        // 🔥 CHECK LICENSE STATUS FOR ADMIN USERS
+        if (user.role === 'admin' && user.companyId) {
+            const company = await Company.findById(user.companyId);
 
-        if (isFirstLogin) {
-            console.log('⚠️ First login for co-worker user:', email, '- Will redirect to password change');
+            if (!company) {
+                return res.status(403).json({
+                    success: false,
+                    error: 'Company not found. Please contact support.',
+                    code: 'COMPANY_NOT_FOUND'
+                });
+            }
+
+            if (company.license?.status === 'pending') {
+                return res.status(403).json({
+                    success: false,
+                    error: 'Your license is pending activation. You will receive an email with your license key once approved.',
+                    code: 'LICENSE_PENDING',
+                    licenseStatus: 'pending'
+                });
+            }
+
+            if (company.license?.status === 'revoked') {
+                return res.status(403).json({
+                    success: false,
+                    error: 'Your license has been revoked. Please contact support for more information.',
+                    code: 'LICENSE_REVOKED',
+                    licenseStatus: 'revoked'
+                });
+            }
         }
 
-        // Update last login
+        const isFirstLogin = user.role === 'co_worker' && user.metadata?.needsPasswordChange === true;
+
+        if (isFirstLogin) {
+            console.log('⚠️ First login for co-worker:', email);
+        }
+
         await user.updateLastLogin(req.ip, req.get('User-Agent'));
 
-        // Generate token
         const token = jwt.sign(
-            { id: user._id, role: user.role },
+            { id: user._id, role: user.role, companyId: user.companyId },
             process.env.JWT_SECRET,
             { expiresIn: '24h' }
         );
 
-        // ✅ Determine redirect based on role AND first login status
         let redirectTo = '/dashboard';
-
-        if (user.role === 'super_admin') {
-            redirectTo = '/super-admin/dashboard';
-        } else if (user.role === 'admin') {
-            redirectTo = '/dashboard';
-        } else if (user.role === 'co-worker') {
-            // ✅ co-worker: Redirect to settings/password change on first login
-            if (isFirstLogin) {
-                redirectTo = '/co-worker/settings?forcePasswordChange=true';
-            } else {
-                redirectTo = '/co-worker/dashboard';
-            }
+        if (user.role === 'super_admin') redirectTo = '/super-admin/dashboard';
+        else if (user.role === 'admin') redirectTo = '/dashboard';
+        else if (user.role === 'co_worker') {
+            redirectTo = isFirstLogin ? '/co-worker/settings?forcePasswordChange=true' : '/co-worker/dashboard';
         }
 
-        // Build user response with populated company data
         const userResponse = {
             id: user._id,
             firstName: user.firstName,
@@ -500,18 +632,15 @@ router.post('/login', async (req, res) => {
             initials: user.initials,
             avatar: user.avatar?.url || '',
             isActive: user.isActive,
-            // company data (now populated)
             companyId: user.companyId ? {
                 id: user.companyId._id,
                 name: user.companyId.name,
                 logo: user.companyId.logo?.url || null
             } : null,
-            permissions: user.role === 'co-worker' ? user.permissions : undefined,
-            // ✅ Add first login flag for frontend
-            needsPasswordChange: user.role === 'co-worker' ? (user.metadata?.needsPasswordChange || false) : false
+            permissions: user.role === 'co_worker' ? user.permissions : undefined,
+            needsPasswordChange: user.role === 'co_worker' ? (user.metadata?.needsPasswordChange || false) : false
         };
 
-        // Add subscription for admin users
         if (user.role === 'admin' && user.companyId) {
             userResponse.company = {
                 id: user.companyId._id,
@@ -520,23 +649,18 @@ router.post('/login', async (req, res) => {
             };
         }
 
-        // Send response
         res.json({
             success: true,
             message: isFirstLogin ? 'First login! Please change your password.' : 'Login successful',
             token,
             redirectTo,
             user: userResponse,
-            // ✅ Extra flag for frontend to show password change modal
             requiresPasswordChange: isFirstLogin
         });
 
     } catch (error) {
         console.error('Login error:', error);
-        res.status(500).json({
-            success: false,
-            error: 'Internal server error during login'
-        });
+        res.status(500).json({ success: false, error: 'Internal server error during login' });
     }
 });
 
@@ -546,21 +670,14 @@ router.post('/login', async (req, res) => {
 
 router.get('/verify-email/:token', async (req, res) => {
     try {
-        const hashedToken = crypto
-            .createHash('sha256')
-            .update(req.params.token)
-            .digest('hex');
-
+        const hashedToken = crypto.createHash('sha256').update(req.params.token).digest('hex');
         const user = await User.findOne({
             emailVerificationToken: hashedToken,
             emailVerificationExpires: { $gt: Date.now() }
         });
 
         if (!user) {
-            return res.status(400).json({
-                success: false,
-                error: 'Invalid or expired verification token'
-            });
+            return res.status(400).json({ success: false, error: 'Invalid or expired verification token' });
         }
 
         user.isEmailVerified = true;
@@ -568,102 +685,47 @@ router.get('/verify-email/:token', async (req, res) => {
         user.emailVerificationExpires = undefined;
         await user.save();
 
-        res.json({
-            success: true,
-            message: 'Email verified successfully! You can now login.'
-        });
-
+        res.json({ success: true, message: 'Email verified successfully!' });
     } catch (error) {
-        console.error('Verification error:', error);
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-// Resend verification email
-router.post('/resend-verification', authMiddleware, async (req, res) => {
-    try {
-        const user = await User.findById(req.user.id);
-
-        if (user.isEmailVerified) {
-            return res.status(400).json({
-                success: false,
-                error: 'Email already verified'
-            });
-        }
-
-        const verificationToken = user.generateEmailVerificationToken();
-        await user.save();
-
-        await sendEmail({
-            to: user.email,
-            subject: 'Verify Your Email - CAP',
-            template: 'verify-email',
-            context: {
-                name: user.firstName,
-                verifyUrl: `${process.env.FRONTEND_URL}/verify-email?token=${verificationToken}`
-            }
-        });
-
-        res.json({
-            success: true,
-            message: 'Verification email sent'
-        });
-
-    } catch (error) {
-        console.error('Resend verification error:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
 
 // ============================================
-// PROFILE & USER MANAGEMENT
+// PROFILE
 // ============================================
 
-// Get Profile (enhanced with virtuals)
 router.get('/profile', authMiddleware, async (req, res) => {
     try {
         const user = await User.findById(req.user.id)
             .populate('companyId')
             .select('-password');
 
-        // Add computed properties
         const profileData = user.toObject();
         profileData.fullName = user.fullName;
-        profileData.isSubscriptionActive = user.isSubscriptionActive;
 
-        if (user.role === 'co-worker') {
+        if (user.role === 'co_worker') {
             const creator = await User.findById(user.createdBy).select('firstName lastName');
             profileData.createdBy = creator ? `${creator.firstName} ${creator.lastName}` : null;
         }
 
-        res.json({
-            success: true,
-            user: profileData
-        });
-
+        res.json({ success: true, user: profileData });
     } catch (error) {
-        console.error('Profile error:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
 
-
-// Update Profile (enhanced with Cloudinary for avatar)
 router.put('/profile', authMiddleware, async (req, res) => {
     try {
         const { firstName, lastName, username, phoneNumber, email, avatar } = req.body;
 
-        // Check email uniqueness if provided
         if (email) {
             const existingUser = await User.findOne({
                 email: email.toLowerCase(),
                 _id: { $ne: req.user.id }
             });
             if (existingUser) {
-                return res.status(400).json({
-                    success: false,
-                    error: 'Email already exists'
-                });
+                return res.status(400).json({ success: false, error: 'Email already exists' });
             }
         }
 
@@ -674,224 +736,91 @@ router.put('/profile', authMiddleware, async (req, res) => {
         if (phoneNumber) updateData.phoneNumber = phoneNumber;
         if (email) updateData.email = email.toLowerCase();
 
-        // Handle avatar upload if provided
         if (avatar && avatar.startsWith('data:image')) {
             try {
-                // Delete old avatar if exists
                 if (req.user.avatar?.publicId) {
                     await deleteImage(req.user.avatar.publicId);
                 }
-
-                // Upload new avatar using the simple uploader
                 const uploadResult = await uploadAvatar(avatar, req.user.id);
-
-                updateData.avatar = {
-                    url: uploadResult.url,
-                    publicId: uploadResult.publicId
-                };
+                updateData.avatar = { url: uploadResult.url, publicId: uploadResult.publicId };
             } catch (uploadError) {
                 console.error('Avatar upload error:', uploadError);
-                // Don't fail the whole request if avatar upload fails
             }
         }
 
-        const user = await User.findByIdAndUpdate(
-            req.user.id,
-            updateData,
-            { new: true, runValidators: true }
-        ).select('-password').populate('companyId');
+        const user = await User.findByIdAndUpdate(req.user.id, updateData, { new: true, runValidators: true })
+            .select('-password').populate('companyId');
 
         res.json({
             success: true,
             message: 'Profile updated successfully',
-            user: {
-                ...user.toObject(),
-                fullName: user.fullName,
-                initials: user.initials
-            }
+            user: { ...user.toObject(), fullName: user.fullName, initials: user.initials }
         });
-
     } catch (error) {
-        console.error('Update profile error:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
 
-// routes/auth.js - Change Password Route
+// ============================================
+// PASSWORD
+// ============================================
+
 router.post('/change-password', authMiddleware, async (req, res) => {
     try {
         const { currentPassword, newPassword, isFirstLogin } = req.body;
-        const user = await User.findById(req.userId).select('+password');
+        const user = await User.findById(req.user.id).select('+password');
 
-        // Handle first login (no current password required)
         if (isFirstLogin && user.metadata?.needsPasswordChange === true) {
-            // Hash new password
             const salt = await bcrypt.genSalt(10);
             user.password = await bcrypt.hash(newPassword, salt);
-
-            // Clear the needsPasswordChange flag
             user.metadata.needsPasswordChange = false;
             await user.save();
-
-            return res.json({
-                success: true,
-                message: 'Password set successfully'
-            });
+            return res.json({ success: true, message: 'Password set successfully' });
         }
 
-        // Normal password change (requires current password)
         const isMatch = await bcrypt.compare(currentPassword, user.password);
         if (!isMatch) {
-            return res.status(401).json({
-                success: false,
-                error: 'Current password is incorrect'
-            });
+            return res.status(401).json({ success: false, error: 'Current password is incorrect' });
         }
 
-        // Hash new password
         const salt = await bcrypt.genSalt(10);
         user.password = await bcrypt.hash(newPassword, salt);
-
         await user.save();
 
-        res.json({
-            success: true,
-            message: 'Password changed successfully'
-        });
+        res.json({ success: true, message: 'Password changed successfully' });
     } catch (error) {
-        console.error('Change password error:', error);
-        res.status(500).json({
-            success: false,
-            error: 'Failed to change password'
-        });
+        res.status(500).json({ success: false, error: 'Failed to change password' });
     }
 });
 
-// Get all users (for super_admin only)
-router.get('/',
-    authMiddleware,
-    roleMiddleware(['super_admin']),
-    async (req, res) => {
-        try {
-            const users = await User.find()
-                .populate('companyId', 'name')
-                .select('-password')
-                .sort({ createdAt: -1 });
+// ============================================
+// PASSWORD RESET
+// ============================================
 
-            // Add computed fields
-            const enhancedUsers = users.map(user => ({
-                ...user.toObject(),
-                fullName: user.fullName,
-                status: user.isActive ? 'active' : 'inactive'
-            }));
-
-            res.json({
-                success: true,
-                users: enhancedUsers,
-                total: enhancedUsers.length
-            });
-
-        } catch (error) {
-            console.error('Get users error:', error);
-            res.status(500).json({ success: false, error: error.message });
-        }
-    }
-);
-
-// Get users by company (for admin to see their co-worker)
-router.get('/company/:companyId',
-    authMiddleware,
-    async (req, res) => {
-        try {
-            // Check if user has access to this company
-            if (req.user.role !== 'super_admin' &&
-                req.user.companyId.toString() !== req.params.companyId) {
-                return res.status(403).json({
-                    success: false,
-                    error: 'Access denied'
-                });
-            }
-
-            const users = await User.find({
-                companyId: req.params.companyId,
-                role: { $in: ['admin', 'co-worker'] }
-            })
-                .select('-password')
-                .sort({ role: 1, createdAt: -1 });
-
-            res.json({
-                success: true,
-                users,
-                total: users.length
-            });
-
-        } catch (error) {
-            console.error('Get company users error:', error);
-            res.status(500).json({ success: false, error: error.message });
-        }
-    }
-);
-
-
-// REQUEST password reset (user enters emails)
 router.post('/forgot-password', async (req, res) => {
     try {
         const { email } = req.body;
-
-        // Find user
         const user = await User.findOne({ email: email.toLowerCase() });
+
         if (!user) {
-            // Don't reveal that user doesn't exist (security)
-            return res.json({
-                success: true,
-                message: 'If email exists, reset link will be sent'
-            });
+            return res.json({ success: true, message: 'If email exists, reset link will be sent' });
         }
 
-        // Generate reset token
         const resetToken = user.generatePasswordResetToken();
         await user.save();
         await sendPasswordResetEmail(user, resetToken);
-        // Create reset URL
-        const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}&email=${user.email}`;
 
-
-        // Password reset email
-        await sendEmail({
-            to: user.email,
-            subject: '🔐 Reset Your CAP Password',
-            template: 'password-reset',
-            context: {
-                firstName: user.firstName,
-                resetUrl: `${FRONTEND_URL}/reset-password?token=${resetToken}`,
-                expiryHours: 1,
-                supportEmail: 'support@cap.com'
-            }
-        });
-        res.json({
-            success: true,
-            message: 'Password reset email sent'
-        });
-
+        res.json({ success: true, message: 'Password reset email sent' });
     } catch (error) {
-        console.error('Forgot password error:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
 
-// ACTUALLY reset password (when user clicks link)
 router.post('/reset-password', async (req, res) => {
     try {
         const { token, email, newPassword } = req.body;
 
-        // Hash the token (since we stored hashed version)
-        const crypto = require('crypto');
-        const hashedToken = crypto
-            .createHash('sha256')
-            .update(token)
-            .digest('hex');
-
-        // Find user with valid token
+        const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
         const user = await User.findOne({
             email: email.toLowerCase(),
             resetPasswordToken: hashedToken,
@@ -899,102 +828,42 @@ router.post('/reset-password', async (req, res) => {
         });
 
         if (!user) {
-            return res.status(400).json({
-                success: false,
-                error: 'Invalid or expired reset token'
-            });
+            return res.status(400).json({ success: false, error: 'Invalid or expired reset token' });
         }
 
-        // Update password
         user.password = await bcrypt.hash(newPassword, 10);
         user.resetPasswordToken = undefined;
         user.resetPasswordExpires = undefined;
         await user.save();
 
-        // Optional: Send confirmation email
-        await sendEmail({
-            to: user.email,
-            subject: '✅ Your Password Has Been Changed',
-            template: 'password-changed', // You might want to create this
-            context: {
-                firstName: user.firstName,
-                loginUrl: `${process.env.FRONTEND_URL}/login`,
-                supportEmail: process.env.SUPPORT_EMAIL
-            }
-        });
-
-        res.json({
-            success: true,
-            message: 'Password reset successful'
-        });
-
+        res.json({ success: true, message: 'Password reset successful' });
     } catch (error) {
-        console.error('Reset password error:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 // ============================================
-// HELPER FUNCTIONS
+// HELPERS
 // ============================================
 
 function checkPasswordStrength(password) {
     let score = 0;
     if (!password) return { score: 0, strength: 'No password' };
-
-    // Length check
     if (password.length >= 8) score += 25;
     if (password.length >= 12) score += 10;
-
-    // Complexity checks
     if (/[A-Z]/.test(password)) score += 15;
     if (/[a-z]/.test(password)) score += 15;
     if (/[0-9]/.test(password)) score += 15;
     if (/[^A-Za-z0-9]/.test(password)) score += 20;
-
-    // No common patterns
     if (!/(123|abc|password|qwerty|admin)/i.test(password)) score += 10;
 
-    const strength =
-        score >= 90 ? 'Very Strong' :
-            score >= 70 ? 'Strong' :
-                score >= 50 ? 'Medium' :
-                    score >= 25 ? 'Weak' : 'Very Weak';
-
+    const strength = score >= 90 ? 'Very Strong' : score >= 70 ? 'Strong' : score >= 50 ? 'Medium' : score >= 25 ? 'Weak' : 'Very Weak';
     return { score, strength };
 }
 
-async function generateUniqueUsername(baseUsername) {
-    let username = baseUsername;
-    let counter = 1;
-
-    while (await User.findOne({ username })) {
-        username = `${baseUsername}${counter}`;
-        counter++;
-    }
-
-    return username;
-}
 const cleanPhoneNumber = (phone) => {
     if (!phone) return '';
-    // Remove all non-digit characters
-    const digits = phone.replace(/\D/g, '');
-    return digits;
+    return phone.replace(/\D/g, '');
 };
 
 module.exports = router;
