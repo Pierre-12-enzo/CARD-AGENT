@@ -41,23 +41,44 @@ const userSchema = new mongoose.Schema({
         trim: true,
         set: function (v) {
             if (!v) return v;
+            // Remove all non-digit characters
             const digits = v.replace(/\D/g, '');
-            if (digits.length === 9 && digits[0] === '7') return '+250' + digits;
-            if (digits.length === 12 && digits.startsWith('2507')) return '+' + digits;
-            if (digits.length === 13 && digits.startsWith('2507')) return '+' + digits;
-            if (v.startsWith('+') && digits.length === 13 && digits.startsWith('2507')) return v.replace(/\s/g, '');
+
+            // Standardize to +250XXXXXXXXX format
+            if (digits.length === 9 && digits[0] === '7') {
+                return '+250' + digits;
+            }
+            if (digits.length === 12 && digits.startsWith('2507')) {
+                return '+' + digits;
+            }
+            if (digits.length === 13 && digits.startsWith('2507')) {
+                return '+' + digits;
+            }
+            // If already has +, keep as is
+            if (v.startsWith('+') && digits.length === 13 && digits.startsWith('2507')) {
+                return v.replace(/\s/g, '');
+            }
             return v;
         },
         validate: {
             validator: function (v) {
                 if (!v) return true;
+                // Remove all non-digit characters for validation
                 const digits = v.replace(/\D/g, '');
+
+                // Valid Rwanda formats:
+                //10 digits starting with 0 (e.g., 0788850304)
+                if(digits.length === 10 && digits[0] === '0') return true;
+                // 9 digits starting with 7 (e.g., 788123456)
                 if (digits.length === 9 && digits[0] === '7') return true;
+                // 12 digits starting with 2507 (e.g., 250788123456)
                 if (digits.length === 12 && digits.startsWith('2507')) return true;
+                // 13 digits starting with 2507 (e.g., 250788123456 with +)
                 if (digits.length === 13 && digits.startsWith('2507')) return true;
+
                 return false;
             },
-            message: 'Please enter a valid Rwanda phone number'
+            message: 'Please enter a valid Rwanda phone number (e.g., 0788123456, +250788123456)'
         }
     },
     password: {
@@ -83,13 +104,27 @@ const userSchema = new mongoose.Schema({
     },
 
     // ===== COMPANY ASSOCIATION =====
+
     companyId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Company',
         required: function () {
-            return this.role !== 'super_admin';
+            if (this.role === 'super_admin') return false;
+            // For admin/co_worker, only required AFTER registration is complete
+            return this.metadata?.registrationCompleted === true;
         },
-        index: true
+        index: true,
+        validate: {
+            validator: function (v) {
+                // Super admin doesn't need companyId
+                if (this.role === 'super_admin') return true;
+                // During registration, allow null
+                if (!this.metadata?.registrationCompleted) return true;
+                // After registration, must have companyId
+                return v != null;
+            },
+            message: 'Company ID is required for non-super admin users'
+        }
     },
 
     // ===== CREATOR TRACKING =====

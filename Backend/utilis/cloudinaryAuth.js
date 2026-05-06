@@ -15,7 +15,7 @@ async function uploadImage(imageData, options = {}) {
         const defaultOptions = {
             folder: 'card-agent/general',
             overwrite: true,
-            timeout: 30000,
+            timeout: 120000,
             transformation: [
                 { width: 300, height: 300, crop: "limit" },
                 { quality: "auto:good" }
@@ -23,7 +23,8 @@ async function uploadImage(imageData, options = {}) {
         };
 
         const uploadOptions = { ...defaultOptions, ...options };
-        const result = await cloudinary.uploader.upload(imageData, uploadOptions);
+        const result = await cloudinary.uploader.upload(imageData
+            , uploadOptions);
 
         return {
             url: result.secure_url,

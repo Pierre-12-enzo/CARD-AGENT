@@ -1,5 +1,8 @@
 // App.jsx - CARD-AGENT
 import React from 'react';
+import { Toaster } from 'react-hot-toast';
+import SocketListener from './components/SocketListener';
+
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Dashboard from './components/Dashboard';
@@ -55,6 +58,8 @@ function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
+        <SocketListener />
+        <Toaster position="top-right" />
         <Routes>
           {/* Public routes */}
           <Route path="/login" element={<Login />} />

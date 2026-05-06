@@ -5,7 +5,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { authAPI } from '../../services/api';
 import StepIndicator from '../../components/auth/StepIndicator';
 import PersonalInfoStep from '../../components/auth/steps/PersonalInfoStep';
-import CompanyInfoStep from '../../components/auth/steps/ComapanyInfoStep';
+import CompanyInfoStep from '../../components/auth/steps/CompanyInfoStep';
 import LicenseStep from '../../components/auth/steps/LicenseStep';
 import CompletionStep from '../../components/auth/steps/CompletionStep';
 
@@ -155,7 +155,7 @@ const MultiStepRegistration = () => {
                         localStorage.setItem('capmis_token', completeResponse.token);
                         localStorage.removeItem('registration_email');
                         localStorage.removeItem('registration_step');
-                        setCurrentStep(4);
+                        setCurrentStep(4); // Go to CompletionStep
                     }
                 }
             }
@@ -305,11 +305,10 @@ const MultiStepRegistration = () => {
                                 initial={{ opacity: 0, y: -10 }}
                                 animate={{ opacity: 1, y: 0 }}
                                 exit={{ opacity: 0, y: -10 }}
-                                className={`mb-4 p-2.5 rounded-lg border text-xs ${
-                                    error.type === 'info'
-                                        ? 'bg-gradient-to-r from-slate-50 to-slate-100 border-slate-300 text-slate-800'
-                                        : 'bg-gradient-to-r from-red-50 to-red-100 border-red-300 text-red-800'
-                                }`}
+                                className={`mb-4 p-2.5 rounded-lg border text-xs ${error.type === 'info'
+                                    ? 'bg-gradient-to-r from-slate-50 to-slate-100 border-slate-300 text-slate-800'
+                                    : 'bg-gradient-to-r from-red-50 to-red-100 border-red-300 text-red-800'
+                                    }`}
                             >
                                 <span className="flex items-center">
                                     <span className="mr-1.5">{error.type === 'info' ? 'ℹ️' : '⚠️'}</span>
@@ -339,6 +338,7 @@ const MultiStepRegistration = () => {
                             <CompanyInfoStep
                                 onSubmit={handleStepComplete}
                                 initialData={registrationData.company}
+                                registrationEmail={registrationData.email}  // 🔥 PASS EMAIL
                                 loading={loading}
                             />
                         )}

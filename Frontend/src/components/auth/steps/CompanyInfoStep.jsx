@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { authAPI } from '../../../services/api';
 
-const CompanyInfoStep = ({ onSubmit, initialData, loading }) => {
+const CompanyInfoStep = ({ onSubmit, registrationEmail, initialData, loading }) => {
   const [companyData, setCompanyData] = useState({
     companyName: initialData?.name || '',
     companyEmail: initialData?.email || '',
@@ -88,8 +88,9 @@ const CompanyInfoStep = ({ onSubmit, initialData, loading }) => {
     if (!validateForm()) return;
 
     const formData = new FormData();
+    formData.append('regEmail', registrationEmail);  // 🔥 Use prop
+    formData.append('companyEmail', companyData.companyEmail);
     formData.append('name', companyData.companyName);
-    formData.append('email', companyData.companyEmail);
     formData.append('phone', companyData.companyPhone);
     formData.append('website', companyData.website);
     formData.append('province', companyData.province);
@@ -142,11 +143,10 @@ const CompanyInfoStep = ({ onSubmit, initialData, loading }) => {
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
-            className={`relative w-28 h-28 rounded-2xl overflow-hidden cursor-pointer transition-all duration-300 ${
-              isDragging
-                ? 'border-4 border-red-500 bg-red-50 scale-105 shadow-lg'
-                : 'border-3 border-dashed border-gray-300 bg-gradient-to-br from-gray-50 to-gray-100 hover:border-red-300'
-            }`}
+            className={`relative w-28 h-28 rounded-2xl overflow-hidden cursor-pointer transition-all duration-300 ${isDragging
+              ? 'border-4 border-red-500 bg-red-50 scale-105 shadow-lg'
+              : 'border-3 border-dashed border-gray-300 bg-gradient-to-br from-gray-50 to-gray-100 hover:border-red-300'
+              }`}
           >
             <input
               type="file"
@@ -218,11 +218,10 @@ const CompanyInfoStep = ({ onSubmit, initialData, loading }) => {
             type="text"
             value={companyData.companyName}
             onChange={handleCompanyNameChange}
-            className={`w-full px-4 py-3 bg-white/80 backdrop-blur-sm border-2 rounded-xl focus:outline-none transition-all duration-300 ${
-              errors.companyName || (!companyNameAvailable && companyData.companyName)
-                ? 'border-red-300 focus:border-red-400'
-                : 'border-gray-200 focus:border-red-400'
-            }`}
+            className={`w-full px-4 py-3 bg-white/80 backdrop-blur-sm border-2 rounded-xl focus:outline-none transition-all duration-300 ${errors.companyName || (!companyNameAvailable && companyData.companyName)
+              ? 'border-red-300 focus:border-red-400'
+              : 'border-gray-200 focus:border-red-400'
+              }`}
             placeholder="e.g., Elite Card Productions Ltd"
           />
           {checkingName && (
@@ -286,9 +285,8 @@ const CompanyInfoStep = ({ onSubmit, initialData, loading }) => {
               type="email"
               value={companyData.companyEmail}
               onChange={(e) => setCompanyData({ ...companyData, companyEmail: e.target.value })}
-              className={`w-full pl-10 pr-4 py-3 bg-white/80 backdrop-blur-sm border-2 rounded-xl focus:outline-none transition-all duration-300 ${
-                errors.companyEmail ? 'border-red-300 focus:border-red-400' : 'border-gray-200 focus:border-red-400'
-              }`}
+              className={`w-full pl-10 pr-4 py-3 bg-white/80 backdrop-blur-sm border-2 rounded-xl focus:outline-none transition-all duration-300 ${errors.companyEmail ? 'border-red-300 focus:border-red-400' : 'border-gray-200 focus:border-red-400'
+                }`}
               placeholder="info@company.com"
             />
             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">✉️</span>
@@ -309,9 +307,8 @@ const CompanyInfoStep = ({ onSubmit, initialData, loading }) => {
               type="tel"
               value={companyData.companyPhone}
               onChange={(e) => setCompanyData({ ...companyData, companyPhone: e.target.value })}
-              className={`w-full pl-10 pr-4 py-3 bg-white/80 backdrop-blur-sm border-2 rounded-xl focus:outline-none transition-all duration-300 ${
-                errors.companyPhone ? 'border-red-300 focus:border-red-400' : 'border-gray-200 focus:border-red-400'
-              }`}
+              className={`w-full pl-10 pr-4 py-3 bg-white/80 backdrop-blur-sm border-2 rounded-xl focus:outline-none transition-all duration-300 ${errors.companyPhone ? 'border-red-300 focus:border-red-400' : 'border-gray-200 focus:border-red-400'
+                }`}
               placeholder="+250 788 123 456"
             />
             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">📞</span>
@@ -355,9 +352,8 @@ const CompanyInfoStep = ({ onSubmit, initialData, loading }) => {
               type="text"
               value={companyData.province}
               onChange={(e) => setCompanyData({ ...companyData, province: e.target.value })}
-              className={`w-full px-4 py-2.5 bg-white/80 backdrop-blur-sm border-2 rounded-xl text-sm focus:outline-none transition-all duration-300 ${
-                errors.province ? 'border-red-300 focus:border-red-400' : 'border-gray-200 focus:border-red-400'
-              }`}
+              className={`w-full px-4 py-2.5 bg-white/80 backdrop-blur-sm border-2 rounded-xl text-sm focus:outline-none transition-all duration-300 ${errors.province ? 'border-red-300 focus:border-red-400' : 'border-gray-200 focus:border-red-400'
+                }`}
               placeholder="Kigali City"
             />
             {errors.province && <p className="mt-1 text-xs text-red-500">{errors.province}</p>}
@@ -368,9 +364,8 @@ const CompanyInfoStep = ({ onSubmit, initialData, loading }) => {
               type="text"
               value={companyData.district}
               onChange={(e) => setCompanyData({ ...companyData, district: e.target.value })}
-              className={`w-full px-4 py-2.5 bg-white/80 backdrop-blur-sm border-2 rounded-xl text-sm focus:outline-none transition-all duration-300 ${
-                errors.district ? 'border-red-300 focus:border-red-400' : 'border-gray-200 focus:border-red-400'
-              }`}
+              className={`w-full px-4 py-2.5 bg-white/80 backdrop-blur-sm border-2 rounded-xl text-sm focus:outline-none transition-all duration-300 ${errors.district ? 'border-red-300 focus:border-red-400' : 'border-gray-200 focus:border-red-400'
+                }`}
               placeholder="Gasabo"
             />
             {errors.district && <p className="mt-1 text-xs text-red-500">{errors.district}</p>}
@@ -384,9 +379,8 @@ const CompanyInfoStep = ({ onSubmit, initialData, loading }) => {
               type="text"
               value={companyData.sector}
               onChange={(e) => setCompanyData({ ...companyData, sector: e.target.value })}
-              className={`w-full px-4 py-2.5 bg-white/80 backdrop-blur-sm border-2 rounded-xl text-sm focus:outline-none transition-all duration-300 ${
-                errors.sector ? 'border-red-300 focus:border-red-400' : 'border-gray-200 focus:border-red-400'
-              }`}
+              className={`w-full px-4 py-2.5 bg-white/80 backdrop-blur-sm border-2 rounded-xl text-sm focus:outline-none transition-all duration-300 ${errors.sector ? 'border-red-300 focus:border-red-400' : 'border-gray-200 focus:border-red-400'
+                }`}
               placeholder="Kimihurura"
             />
             {errors.sector && <p className="mt-1 text-xs text-red-500">{errors.sector}</p>}

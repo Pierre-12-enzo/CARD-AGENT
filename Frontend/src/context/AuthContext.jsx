@@ -96,7 +96,32 @@ export const AuthProvider = ({ children }) => {
     initAuth();
   }, []);
 
-  // context/AuthContext.jsx - UPDATED login function
+  // 🔥 Listen for license revocation in real-time
+  useEffect(() => {
+    const socket = getSocket();
+    if (!socket) return;
+
+    const handleLicenseRevoked = (data) => {
+      console.log('🚫 License revoked received:', data);
+
+      // Clear auth data
+      storage.removeItem('capmis_token');
+      setUser(null);
+      disconnectSocket();
+
+      // Show message and redirect
+      alert(data.message || 'Your license has been revoked. Please contact support.');
+      window.location.href = '/login?reason=license_revoked';
+    };
+
+    socket.on('license:revoked', handleLicenseRevoked);
+
+    return () => {
+      socket.off('license:revoked', handleLicenseRevoked);
+    };
+  }, [user]); // Re-run when user changes (after login)
+
+  // UPDATED login function
   const login = async (email, password) => {
     try {
       setLoading(true);
@@ -205,7 +230,7 @@ export const AuthProvider = ({ children }) => {
     isAuthenticated,
     storageAvailable,
     socket: getSocket(),
-    isSocketConnected,  // ✅ Add socket connection status to context
+    isSocketConnected: () => isSocketConnected(),  // ✅ Add socket connection status to context
   };
 
   return (

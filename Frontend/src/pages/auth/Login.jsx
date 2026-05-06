@@ -89,6 +89,15 @@ const Login = () => {
     }
   }, [error]);
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const reason = params.get('reason');
+
+    if (reason === 'license_revoked') {
+      setError('Your license has been revoked. Please contact support for more information.');
+    }
+  }, []);
+
   return (
     <div className="min-h-screen flex bg-white">
       {/* Left Side - Form */}
@@ -138,8 +147,8 @@ const Login = () => {
                   id="email" name="email" type="email" required
                   value={formData.email} onChange={handleChange} onBlur={handleBlur}
                   className={`block w-full px-4 py-3 bg-white border rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 transition-all duration-300 pl-10 ${formErrors.email && touched.email
-                      ? 'border-red-300 focus:ring-red-500 focus:border-red-500'
-                      : 'border-gray-300 focus:ring-red-500 focus:border-red-400'
+                    ? 'border-red-300 focus:ring-red-500 focus:border-red-500'
+                    : 'border-gray-300 focus:ring-red-500 focus:border-red-400'
                     }`}
                   placeholder="Enter your email"
                   autoComplete="email"
@@ -168,8 +177,8 @@ const Login = () => {
                   id="password" name="password" type="password" required
                   value={formData.password} onChange={handleChange} onBlur={handleBlur}
                   className={`block w-full px-4 py-3 bg-white border rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 transition-all duration-300 pl-10 ${formErrors.password && touched.password
-                      ? 'border-red-300 focus:ring-red-500 focus:border-red-500'
-                      : 'border-gray-300 focus:ring-red-500 focus:border-red-400'
+                    ? 'border-red-300 focus:ring-red-500 focus:border-red-500'
+                    : 'border-gray-300 focus:ring-red-500 focus:border-red-400'
                     }`}
                   placeholder="Enter your password"
                   autoComplete="current-password"

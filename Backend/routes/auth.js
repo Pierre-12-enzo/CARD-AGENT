@@ -164,8 +164,7 @@ router.post('/register/step1/personal', async (req, res) => {
     }
 });
 
-// STEP 2: Company Info
-// STEP 2: Company Info - CREATE COMPANY + USER NOW
+// STEP 2: Company Info - CREATE USER FIRST, THEN COMPANY
 router.post('/register/step2/company',
     upload.single('logo'),
     async (req, res) => {
@@ -173,11 +172,15 @@ router.post('/register/step2/company',
             console.log('📥 Step 2 - req.body:', req.body);
             console.log('📥 Step 2 - req.file:', req.file);
 
-            // Get email from multiple possible sources
-            const email = String(req.body.email || req.body.regEmail || '').toLowerCase();
+            // Handle email that might come as array
+            let rawEmail = req.body.email;
+            if (Array.isArray(rawEmail)) rawEmail = rawEmail[0];
+            const email = String(rawEmail || req.body.regEmail || '').toLowerCase();
+
             const companyName = req.body.name || req.body.companyName;
             const companyPhone = req.body.phone || req.body.companyPhone;
             const companyEmail = req.body.companyEmail || req.body.email || email;
+            const finalCompanyEmail = Array.isArray(companyEmail) ? companyEmail[0] : companyEmail;
             const companyWebsite = req.body.website || '';
             const province = req.body.province || '';
             const district = req.body.district || '';
@@ -185,19 +188,13 @@ router.post('/register/step2/company',
             const country = req.body.country || 'Rwanda';
 
             if (!email) {
-                return res.status(400).json({
-                    success: false,
-                    error: 'Email is required'
-                });
+                return res.status(400).json({ success: false, error: 'Email is required' });
             }
-            if (!companyName || !companyPhone || !companyEmail) {
-                return res.status(400).json({
-                    success: false,
-                    error: 'Company name, phone, and email are required'
-                });
+            if (!companyName || !companyPhone || !finalCompanyEmail) {
+                return res.status(400).json({ success: false, error: 'Company name, phone, and email are required' });
             }
 
-            // Get registration progress for personal data
+            // Get personal data from progress
             const progress = await RegistrationProgress.findOne({ email });
             if (!progress || !progress.data?.personal) {
                 return res.status(404).json({
@@ -231,28 +228,7 @@ router.post('/register/step2/company',
                 }
             }
 
-            // 🔥 CREATE COMPANY NOW (inactive, pending license)
-            const company = await Company.create({
-                name: companyName,
-                phone: companyPhone,
-                email: companyEmail,
-                website: companyWebsite,
-                address: { province, district, sector, country },
-                logo: logoData || {},
-                license: {
-                    key: null,
-                    status: 'pending',
-                    issuedAt: null,
-                    expiresAt: null,
-                    maxOrganizations: 10,
-                    maxCardsPerMonth: 5000
-                },
-                adminId: null,
-                isActive: false
-            });
-            console.log('✅ Company created (pending):', company.name);
-
-            // Generate username
+            // ========== 1️⃣ CREATE USER FIRST ==========
             const cleanPhone = cleanPhoneNumber(personal.phoneNumber);
             const baseUsername = `${personal.firstName.toLowerCase()}.${personal.lastName.toLowerCase()}`;
             let username = baseUsername;
@@ -262,21 +238,21 @@ router.post('/register/step2/company',
                 counter++;
             }
 
-            // 🔥 Check if user already exists from a previous attempt
             let user = await User.findOne({ email });
 
             if (user) {
-                // Update existing user
-                user.companyId = company._id;
+                // Update existing user from previous attempt
                 user.firstName = personal.firstName;
                 user.lastName = personal.lastName;
                 user.phoneNumber = cleanPhone;
                 user.password = personal.password;
+                user.role = 'admin';
                 user.metadata.registrationStep = 2;
+                user.metadata.registrationCompleted = false;
                 await user.save();
                 console.log('✅ User updated:', user.email);
             } else {
-                // 🔥 CREATE USER NOW
+                // Create new user
                 user = await User.create({
                     firstName: personal.firstName,
                     lastName: personal.lastName,
@@ -285,7 +261,7 @@ router.post('/register/step2/company',
                     phoneNumber: cleanPhone,
                     password: personal.password,
                     role: 'admin',
-                    companyId: company._id,
+                    companyId: null, // Will update after company creation
                     avatar: {
                         initials: `${personal.firstName[0]}${personal.lastName[0]}`.toUpperCase()
                     },
@@ -299,23 +275,63 @@ router.post('/register/step2/company',
                 console.log('✅ User created:', user.email);
             }
 
-            // Update company with adminId
-            company.adminId = user._id;
-            await company.save();
+            // ========== 2️⃣ CREATE COMPANY WITH USER ID ==========
+            const company = await Company.create({
+                name: companyName,
+                phone: companyPhone,
+                email: finalCompanyEmail,
+                website: companyWebsite,
+                address: { province, district, sector, country },
+                logo: logoData || {},
+                license: {
+                    key: null,
+                    status: 'pending',
+                    issuedAt: null,
+                    expiresAt: null,
+                    maxOrganizations: 10,
+                    maxCardsPerMonth: 5000
+                },
+                adminId: user._id,
+                isActive: false
+            });
+            console.log('✅ Company created (pending):', company.name);
 
-            // 🔥 Send alert to super admins
+            // ========== 3️⃣ UPDATE USER WITH COMPANY ID ==========
+            user.companyId = company._id;
+            await user.save();
+            console.log('✅ User linked to company');
+
+            // ========== 4️⃣ SEND ALERT TO SUPER ADMINS ==========
             try {
                 await sendNewRegistrationAlert(company, user);
+
+                // 🔥 EMIT REAL-TIME NOTIFICATION TO SUPER ADMINS
+                try {
+                    const socketService = require('../services/socketService');
+                    socketService.emitToRole('super_admin', 'company:new-registration', {
+                        companyName: company.name,
+                        adminName: `${user.firstName} ${user.lastName}`,
+                        adminEmail: user.email,
+                        companyPhone: company.phone,
+                        companyId: company._id,
+                        timestamp: new Date().toISOString()
+                    });
+                    console.log('📡 Real-time alert sent to super admins');
+                } catch (socketErr) {
+                    console.error('Socket emission failed:', socketErr);
+                }
+
+                
             } catch (alertErr) {
                 console.error('Admin alert failed:', alertErr);
             }
 
-            // Update registration progress
+            // ========== 5️⃣ UPDATE REGISTRATION PROGRESS ==========
             progress.step = 3;
             progress.data.company = {
                 name: companyName,
                 phone: companyPhone,
-                email: companyEmail,
+                email: finalCompanyEmail,
                 website: companyWebsite,
                 address: { province, district, sector, country },
                 logo: logoData
@@ -397,93 +413,28 @@ router.post('/register/step3/license', async (req, res) => {
 });
 
 
-// STEP 4: Complete Registration
+// STEP 4: Complete Registration - Just finalize
 router.post('/register/complete', async (req, res) => {
     try {
         const { email } = req.body;
         console.log('📥 Complete registration for:', email);
 
-        const progress = await RegistrationProgress.findOne({ email: email.toLowerCase() });
+        const emailStr = String(email).toLowerCase();
+        const user = await User.findOne({ email: emailStr }).populate('companyId');
 
-        if (!progress) {
+        if (!user) {
             return res.status(404).json({
                 success: false,
-                error: 'Registration session not found'
+                error: 'User not found. Please restart registration.'
             });
         }
 
-        const { personal, company: companyData, license: licenseData } = progress.data;
+        // Mark registration as complete
+        user.metadata.registrationCompleted = true;
+        user.metadata.registrationStep = 4;
+        await user.save();
 
-        if (!personal) {
-            return res.status(400).json({ success: false, error: 'Personal information is missing' });
-        }
-        if (!companyData) {
-            return res.status(400).json({ success: false, error: 'Company information is missing' });
-        }
-        if (!licenseData?.licenseKey) {
-            return res.status(400).json({ success: false, error: 'License key is missing' });
-        }
-
-        const licenseStatus = 'pending';
-
-        const cleanPhone = cleanPhoneNumber(personal.phoneNumber);
-        const baseUsername = `${personal.firstName.toLowerCase()}.${personal.lastName.toLowerCase()}`;
-        let username = baseUsername;
-        let counter = 1;
-        while (await User.findOne({ username })) {
-            username = `${baseUsername}${counter}`;
-            counter++;
-        }
-
-        // Create Company
-        const company = await Company.create({
-            name: companyData.name,
-            phone: companyData.phone,
-            email: companyData.email,
-            website: companyData.website || '',
-            address: {
-                province: companyData.address?.province || '',
-                district: companyData.address?.district || '',
-                sector: companyData.address?.sector || '',
-                country: companyData.address?.country || 'Rwanda'
-            },
-            logo: companyData.logo || {},
-            license: {
-                key: licenseData.licenseKey,
-                status: licenseStatus,
-                issuedAt: null,
-                expiresAt: null,
-                maxOrganizations: 10,
-                maxCardsPerMonth: 5000
-            },
-            adminId: null,
-            isActive: false
-        });
-
-        // Create User (Admin)
-        const user = await User.create({
-            firstName: personal.firstName,
-            lastName: personal.lastName,
-            username: username,
-            email: email.toLowerCase(),
-            phoneNumber: cleanPhone,
-            password: personal.password,
-            role: 'admin',
-            companyId: company._id,
-            avatar: {
-                initials: `${personal.firstName[0]}${personal.lastName[0]}`.toUpperCase()
-            },
-            metadata: {
-                registrationStep: 4,
-                registrationCompleted: true
-            },
-            isEmailVerified: false,
-            isActive: true
-        });
-
-        // Update company with adminId
-        company.adminId = user._id;
-        await company.save();
+        const company = user.companyId;
 
         // Generate JWT
         const token = jwt.sign(
@@ -492,23 +443,17 @@ router.post('/register/complete', async (req, res) => {
             { expiresIn: '24h' }
         );
 
-        // Send emails
+        // Send welcome email
         try {
             await sendWelcomeEmail(user, company);
         } catch (emailErr) {
             console.error('Welcome email failed:', emailErr);
         }
 
-        try {
-            await sendNewRegistrationAlert(company, user);
-        } catch (alertErr) {
-            console.error('Admin alert email failed:', alertErr);
-        }
+        // Clean up progress
+        await RegistrationProgress.deleteOne({ email: emailStr });
 
-        // Clean up
-        await RegistrationProgress.deleteOne({ _id: progress._id });
-
-        res.status(201).json({
+        res.status(200).json({
             success: true,
             message: 'Registration completed! Awaiting license activation.',
             user: {
@@ -521,7 +466,7 @@ router.post('/register/complete', async (req, res) => {
                     id: company._id,
                     name: company.name
                 },
-                licenseStatus
+                licenseStatus: company.license?.status || 'pending'
             },
             token,
             redirectTo: '/dashboard'
@@ -529,12 +474,6 @@ router.post('/register/complete', async (req, res) => {
 
     } catch (error) {
         console.error('❌ Complete registration error:', error);
-        if (error.name === 'ValidationError') {
-            return res.status(400).json({
-                success: false,
-                error: Object.values(error.errors).map(e => e.message).join(', ')
-            });
-        }
         res.status(500).json({ success: false, error: error.message });
     }
 });

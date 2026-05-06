@@ -348,25 +348,47 @@ const sendPermissionsUpdatedEmail = async (coWorker, company, adminUser, permiss
 
 /**
  * Send super admin alert for new registration
+ * Queries DB to find ALL super admins
  */
 const sendNewRegistrationAlert = async (company, adminUser) => {
-    const superAdminEmail = process.env.SUPER_ADMIN_EMAIL || process.env.ADMIN_EMAIL;
-    if (!superAdminEmail) return { success: false, error: 'No super admin email configured' };
+    try {
+        const User = require('../models/User');
+        const superAdmins = await User.find({ role: 'super_admin', isActive: true }).select('email firstName');
 
-    return sendEmail({
-        to: superAdminEmail,
-        subject: `New Company Registration: ${company.name}`,
-        template: 'admin-new-registration',
-        context: {
-            companyName: company.name,
-            adminName: `${adminUser.firstName} ${adminUser.lastName}`,
-            adminEmail: adminUser.email,
-            companyPhone: company.phone,
-            companyAddress: `${company.address?.district}, ${company.address?.province}`,
-            registrationDate: new Date().toLocaleString(),
-            manageLicensesUrl: `${process.env.FRONTEND_URL}/super-admin/licenses`
+        console.log('🔍 Found super admins:', superAdmins.length, superAdmins.map(a => a.email));
+
+        if (superAdmins.length === 0) {
+            console.log('⚠️ No super admin found in database');
+            return { success: false, error: 'No super admin found' };
         }
-    });
+
+        // Send to ALL super admins
+        const results = [];
+        for (const superAdmin of superAdmins) {
+            const result = await sendEmail({
+                to: superAdmin.email,
+                subject: `🆕 New Company Registration: ${company.name}`,
+                template: 'admin-new-registration',
+                context: {
+                    superAdminName: superAdmin.firstName,
+                    companyName: company.name,
+                    adminName: `${adminUser.firstName} ${adminUser.lastName}`,
+                    adminEmail: adminUser.email,
+                    companyPhone: company.phone,
+                    companyAddress: `${company.address?.district}, ${company.address?.province}`,
+                    registrationDate: new Date().toLocaleString(),
+                    manageLicensesUrl: `${process.env.FRONTEND_URL}/super-admin/licenses`
+                }
+            });
+            results.push(result);
+            console.log(`📧 Alert sent to super admin: ${superAdmin.email}`);
+        }
+
+        return { success: true, sentTo: superAdmins.map(a => a.email) };
+    } catch (error) {
+        console.error('❌ Failed to send super admin alert:', error);
+        return { success: false, error: error.message };
+    }
 };
 
 module.exports = {
