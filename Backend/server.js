@@ -270,7 +270,7 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/card', require('./routes/card'));
 app.use('/api/students', require('./routes/student'));
 app.use('/api/templates', require('./routes/templates'));
-app.use('/api/staff', require('./routes/co-worker.js'));
+app.use('/api/co-workers', require('./routes/co-worker.js'));
 app.use('/api/audit', require('./routes/audit'));
 app.use('/api/company', require('./routes/company'));
 app.use('/api/organizations', require('./routes/school'));

@@ -59,7 +59,8 @@ const globalAudit = (req, res, next) => {
         const logData = {
           userId: req.user.id,
           action: getActionName(req),
-          companyId: req.user.companyId,
+          companyId: req.user.companyId || null,
+          schoolId: req.body?.organizationId || req.params?.orgId || req.body?.schoolId || null,
           targetId: getTargetId(req, body),
           targetModel: getTargetModel(req.path),
           details: {
@@ -80,6 +81,12 @@ const globalAudit = (req, res, next) => {
           responseTime: Date.now() - req._startTime
         };
 
+        console.log('📝 Creating audit log:', {
+          action: logData.action,
+          companyId: logData.companyId,
+          userId: logData.userId
+        });
+
         const auditLog = await AuditLog.create(logData);
 
         // Emit socket event for real-time audit updates
@@ -89,7 +96,7 @@ const globalAudit = (req, res, next) => {
             action: auditLog.action,
             status: auditLog.status,
             importance: auditLog.importance,
-            companyId: req.user.companyId,
+            companyId: auditLog.companyId,
             userId: req.user.id,
             targetModel: auditLog.targetModel,
             targetId: auditLog.targetId,
