@@ -1,6 +1,8 @@
 // pages/dashboard/Students.jsx - CARD-AGENT NAVY & CRIMSON
 import React, { useState, useEffect, useRef } from 'react';
 import { studentAPI, organizationAPI } from '../../services/api';
+import * as XLSX from 'xlsx';
+import toast from 'react-hot-toast';
 
 const Students = () => {
 
@@ -263,6 +265,52 @@ const Students = () => {
     }
   };
 
+  // Download Student import template
+  const downloadStudentTemplate = () => {
+    const template = [
+      {
+        student_id: 'STU001',
+        name: 'John Doe',
+        class: 'S1A',
+        level: 'O-Level',
+        gender: 'Male',
+        residence: 'Kigali',
+        academic_year: '2026',
+        parent_phone: '0788123456'
+      }
+    ];
+
+    const ws = XLSX.utils.json_to_sheet(template);
+    ws['!cols'] = Array(8).fill({ wch: 18 });
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Students Template');
+    XLSX.writeFile(wb, 'students_import_template.xlsx');
+  };
+
+  // Download Employee import template
+  const downloadEmployeeTemplate = () => {
+    const template = [
+      {
+        student_id: 'EMP001',
+        name: 'Jane Smith',
+        department: 'Finance',
+        position: 'Accountant',
+        gender: 'Female',
+        residence: 'Kigali',
+        phone: '0788123456',
+        email: 'jane@company.com'
+      }
+    ];
+
+    const ws = XLSX.utils.json_to_sheet(template);
+    ws['!cols'] = Array(8).fill({ wch: 18 });
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Employees Template');
+    XLSX.writeFile(wb, 'employees_import_template.xlsx');
+  };
+
   const resetForm = () => {
     setFormData({
       student_id: '', name: '', personType: 'student',
@@ -342,8 +390,8 @@ const Students = () => {
                   key={org._id}
                   onClick={() => handleOrgChange(org)}
                   className={`px-4 py-2 rounded-xl text-sm font-medium transition-all ${selectedOrg?._id === org._id
-                      ? 'bg-red-600 text-white shadow-lg shadow-red-500/30'
-                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200'
+                    ? 'bg-red-600 text-white shadow-lg shadow-red-500/30'
+                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200'
                     }`}
                 >
                   <span className="capitalize">{org.type === 'corporate' ? '🏢' : '🏫'}</span> {org.name}
@@ -456,8 +504,8 @@ const Students = () => {
                       </td>
                       <td className="px-4 py-3">
                         <span className={`text-xs font-medium px-2 py-1 rounded-full ${student.personType === 'student'
-                            ? 'bg-blue-100 text-blue-700'
-                            : 'bg-purple-100 text-purple-700'
+                          ? 'bg-blue-100 text-blue-700'
+                          : 'bg-purple-100 text-purple-700'
                           }`}>
                           {student.personType === 'student' ? '🎓 Student' : '💼 Employee'}
                         </span>
@@ -672,7 +720,7 @@ const Students = () => {
 
               {importProgress && (
                 <div className={`p-3 rounded-xl text-sm ${importProgress.status === 'success' ? 'bg-green-50 text-green-700' :
-                    importProgress.status === 'error' ? 'bg-red-50 text-red-700' : 'bg-blue-50 text-blue-700'
+                  importProgress.status === 'error' ? 'bg-red-50 text-red-700' : 'bg-blue-50 text-blue-700'
                   }`}>
                   {importProgress.status === 'uploading' && <i className="pi pi-spinner pi-spin mr-2"></i>}
                   {importProgress.message}
@@ -681,6 +729,18 @@ const Students = () => {
             </div>
             <div className="flex justify-end gap-3 p-5 border-t border-slate-200 bg-slate-50">
               <button onClick={resetForm} className="px-4 py-2 border border-slate-300 rounded-xl text-slate-700">Cancel</button>
+
+              <div className="flex gap-2">
+                <button onClick={downloadStudentTemplate}
+                  className="flex-1 py-2 bg-red-50 text-red-700 rounded-lg text-sm font-medium hover:bg-red-100">
+                  <i className="pi pi-download mr-1"></i> Student Template
+                </button>
+                <button onClick={downloadEmployeeTemplate}
+                  className="flex-1 py-2 bg-slate-100 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-200">
+                  <i className="pi pi-download mr-1"></i> Employee Template
+                </button>
+              </div>
+
               <button onClick={() => handleBulkImport(false)} disabled={!csvFile || loading}
                 className="px-4 py-2 bg-slate-700 text-white rounded-xl hover:bg-slate-600 disabled:opacity-50">
                 Import CSV

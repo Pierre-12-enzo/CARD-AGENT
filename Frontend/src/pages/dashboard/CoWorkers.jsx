@@ -2,7 +2,8 @@
 import React, { useState, useEffect } from 'react';
 import { coWorkerAPI, organizationAPI } from '../../services/api';
 import { AnimatePresence, motion } from 'framer-motion';
-
+import * as XLSX from 'xlsx';
+import toast from 'react-hot-toast';
 const CoWorkers = () => {
   const [coWorkers, setCoWorkers] = useState([]);
   const [organizations, setOrganizations] = useState([]);
@@ -12,6 +13,12 @@ const CoWorkers = () => {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [selectedCoWorker, setSelectedCoWorker] = useState(null);
   const [notification, setNotification] = useState({ show: false, type: '', message: '' });
+  const [showBulkModal, setShowBulkModal] = useState(false);
+  const [bulkFile, setBulkFile] = useState(null);
+  const [bulkPreview, setBulkPreview] = useState([]);
+  const [bulkLoading, setBulkLoading] = useState(false);
+  const [bulkResults, setBulkResults] = useState(null);
+
 
   // Form state
   const [formData, setFormData] = useState({
@@ -180,6 +187,114 @@ const CoWorkers = () => {
     }
   };
 
+  // Download Co-Worker import template
+  const downloadCoWorkerTemplate = () => {
+    const template = [
+      {
+        firstName: 'John',
+        lastName: 'Doe',
+        email: 'john.doe@example.com',
+        phoneNumber: '0788123456',
+        organizationName: 'Monfort',  // Must match an existing organization
+        canManageStudents: 'YES',
+        canGenerateCards: 'YES',
+        canManageTemplates: 'NO',
+        canUploadCSV: 'NO',
+        canUploadPhotos: 'NO',
+        canViewAnalytics: 'NO',
+        canViewAuditLogs: 'NO'
+      }
+    ];
+
+    const ws = XLSX.utils.json_to_sheet(template);
+
+    // Add column widths
+    ws['!cols'] = [
+      { wch: 15 }, { wch: 15 }, { wch: 30 }, { wch: 15 }, { wch: 20 },
+      { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 15 }, { wch: 15 },
+      { wch: 18 }, { wch: 18 }
+    ];
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Co-Workers Template');
+    XLSX.writeFile(wb, 'co_workers_import_template.xlsx');
+  };
+
+  // Handle file upload
+  const handleBulkFileUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setBulkFile(file);
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const data = new Uint8Array(evt.target.result);
+        const workbook = XLSX.read(data, { type: 'array' });
+        const sheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[sheetName];
+        const jsonData = XLSX.utils.sheet_to_json(worksheet);
+        setBulkPreview(jsonData.slice(0, 5)); // Show first 5 rows
+      } catch (error) {
+        console.error('Error parsing file:', error);
+        toast.error('Failed to parse file. Please check the format.');
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  // Handle bulk import
+  const handleBulkImport = async () => {
+    if (!bulkFile) {
+      toast.error('Please upload a file first');
+      return;
+    }
+
+    setBulkLoading(true);
+    setBulkResults(null);
+
+    try {
+      const data = new Uint8Array(await bulkFile.arrayBuffer());
+      const workbook = XLSX.read(data, { type: 'array' });
+      const sheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[sheetName];
+      const jsonData = XLSX.utils.sheet_to_json(worksheet);
+
+      const staffList = jsonData.map(row => ({
+        firstName: row.firstName,
+        lastName: row.lastName,
+        email: row.email,
+        phoneNumber: row.phoneNumber?.toString(),
+        permissions: [{
+          organizationName: row.organizationName,
+          canManageStudents: String(row.canManageStudents).toUpperCase() === 'YES',
+          canGenerateCards: String(row.canGenerateCards).toUpperCase() === 'YES',
+          canManageTemplates: String(row.canManageTemplates).toUpperCase() === 'YES',
+          canUploadCSV: String(row.canUploadCSV).toUpperCase() === 'YES',
+          canUploadPhotos: String(row.canUploadPhotos).toUpperCase() === 'YES',
+          canViewAnalytics: String(row.canViewAnalytics).toUpperCase() === 'YES',
+          canViewAuditLogs: String(row.canViewAuditLogs).toUpperCase() === 'YES'
+        }]
+      }));
+
+      const response = await coWorkerAPI.bulkCreate(staffList);
+      setBulkResults(response.results);
+
+      if (response.results?.success?.length > 0) {
+        toast.success(`${response.results.success.length} co-workers imported!`);
+        loadData();
+      }
+      if (response.results?.failed?.length > 0) {
+        toast.error(`${response.results.failed.length} failed to import`);
+      }
+    } catch (error) {
+      console.error('Bulk import error:', error);
+      toast.error('Failed to import co-workers');
+    } finally {
+      setBulkLoading(false);
+    }
+  };
+
   const totalPages = Math.ceil(filteredCoWorkers.length / itemsPerPage) || 1;
   const paginatedCoWorkers = filteredCoWorkers.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
@@ -207,11 +322,21 @@ const CoWorkers = () => {
           </h2>
           <p className="text-slate-500 mt-1">Manage team members and their organization permissions</p>
         </div>
-        <button onClick={handleAddNew}
-          className="px-5 py-2.5 bg-gradient-to-r from-red-600 to-red-500 hover:from-red-700 hover:to-red-600 text-white rounded-xl font-medium transition-all flex items-center space-x-2 shadow-lg hover:shadow-xl">
-          <i className="pi pi-user-plus"></i>
-          <span>Add Co-Worker</span>
-        </button>
+        <div className='flex gap-3'>
+          <button
+            onClick={() => setShowBulkModal(true)}
+            className="px-5 py-2.5 bg-slate-700 hover:bg-slate-600 text-white rounded-xl font-medium transition-all flex items-center space-x-2 shadow-lg"
+          >
+            <i className="pi pi-upload"></i>
+            <span>Bulk Import</span>
+          </button>
+          <button onClick={handleAddNew}
+            className="px-5 py-2.5 bg-gradient-to-r from-red-600 to-red-500 hover:from-red-700 hover:to-red-600 text-white rounded-xl font-medium transition-all flex items-center space-x-2 shadow-lg hover:shadow-xl">
+            <i className="pi pi-user-plus"></i>
+            <span>Add Co-Worker</span>
+          </button>
+        </div>
+
       </div>
 
       {/* Stats */}
@@ -297,6 +422,7 @@ const CoWorkers = () => {
             </div>
           )}
         </>
+
       ) : (
         <div className="text-center py-16 bg-white rounded-2xl shadow-lg border border-slate-200/50">
           <i className="pi pi-users text-5xl text-slate-300 mb-4 block"></i>
@@ -501,6 +627,137 @@ const CoWorkers = () => {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Bulk Import Modal */}
+      {showBulkModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-hidden animate-scale-in">
+            {/* Header */}
+            <div className="flex items-center justify-between p-5 border-b border-slate-200 bg-slate-50">
+              <h3 className="text-xl font-bold text-slate-800">Bulk Import Co-Workers</h3>
+              <button onClick={() => { setShowBulkModal(false); setBulkFile(null); setBulkPreview([]); setBulkResults(null); }}
+                className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center hover:bg-slate-300">
+                <i className="pi pi-times"></i>
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-5 space-y-4 overflow-y-auto max-h-[calc(90vh-140px)]">
+              {!bulkResults ? (
+                <>
+                  {/* Instructions */}
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-4">
+                    <h4 className="font-semibold text-slate-800 mb-2">📋 Instructions</h4>
+                    <ol className="text-sm text-slate-600 space-y-1 list-decimal list-inside">
+                      <li>Download the template file below</li>
+                      <li>Fill in co-worker details (use YES/NO for permissions)</li>
+                      <li>Organization name must match an existing organization</li>
+                      <li>Upload the completed file</li>
+                      <li>Click "Import Co-Workers"</li>
+                    </ol>
+                  </div>
+
+                  {/* Download Template */}
+                  <button
+                    onClick={downloadCoWorkerTemplate}
+                    className="w-full py-3 bg-gradient-to-r from-red-600 to-red-500 text-white rounded-xl font-medium hover:from-red-700 hover:to-red-600 transition-all flex items-center justify-center space-x-2"
+                  >
+                    <i className="pi pi-download"></i>
+                    <span>Download Template (Excel)</span>
+                  </button>
+
+                  {/* File Upload */}
+                  <div className="border-2 border-dashed border-slate-300 rounded-xl p-6 text-center hover:border-red-300 transition-colors">
+                    <input
+                      type="file"
+                      accept=".xlsx,.xls,.csv"
+                      onChange={handleBulkFileUpload}
+                      className="hidden"
+                      id="bulk-file-upload"
+                    />
+                    <label htmlFor="bulk-file-upload" className="cursor-pointer">
+                      <i className="pi pi-cloud-upload text-3xl text-slate-400 mb-2 block"></i>
+                      <p className="text-slate-600 font-medium">
+                        {bulkFile ? bulkFile.name : 'Click to upload file'}
+                      </p>
+                      <p className="text-xs text-slate-400 mt-1">Excel (.xlsx, .xls) or CSV files</p>
+                    </label>
+                  </div>
+
+                  {/* Preview */}
+                  {bulkPreview.length > 0 && (
+                    <div>
+                      <h4 className="font-semibold text-slate-800 mb-2">Preview (First 5 Rows)</h4>
+                      <div className="overflow-x-auto rounded-xl border border-slate-200">
+                        <table className="w-full text-xs">
+                          <thead className="bg-slate-50">
+                            <tr>
+                              {Object.keys(bulkPreview[0]).slice(0, 6).map(key => (
+                                <th key={key} className="px-3 py-2 text-left font-semibold text-slate-600">{key}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {bulkPreview.map((row, i) => (
+                              <tr key={i}>
+                                {Object.values(row).slice(0, 6).map((val, j) => (
+                                  <td key={j} className="px-3 py-2 text-slate-700">{String(val)}</td>
+                                ))}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                /* Results */
+                <div className="space-y-3">
+                  <h4 className="font-semibold text-slate-800">Import Results</h4>
+                  <div className="bg-green-50 border border-green-200 rounded-xl p-4">
+                    <p className="text-green-800 font-medium">✅ Success: {bulkResults.success?.length || 0}</p>
+                    {bulkResults.success?.slice(0, 10).map((item, i) => (
+                      <p key={i} className="text-sm text-green-700">{item.name} ({item.email})</p>
+                    ))}
+                  </div>
+                  {bulkResults.failed?.length > 0 && (
+                    <div className="bg-red-50 border border-red-200 rounded-xl p-4">
+                      <p className="text-red-800 font-medium">❌ Failed: {bulkResults.failed.length}</p>
+                      {bulkResults.failed.map((item, i) => (
+                        <p key={i} className="text-sm text-red-700">{item.email}: {item.reason}</p>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="flex justify-end gap-3 p-5 border-t border-slate-200 bg-slate-50">
+              <button
+                onClick={() => { setShowBulkModal(false); setBulkFile(null); setBulkPreview([]); setBulkResults(null); }}
+                className="px-5 py-2.5 border border-slate-300 rounded-xl text-slate-700 font-medium"
+              >
+                {bulkResults ? 'Close' : 'Cancel'}
+              </button>
+              {!bulkResults && bulkFile && (
+                <button
+                  onClick={handleBulkImport}
+                  disabled={bulkLoading}
+                  className="px-5 py-2.5 bg-gradient-to-r from-red-600 to-red-500 text-white rounded-xl font-medium hover:from-red-700 hover:to-red-600 disabled:opacity-50 flex items-center space-x-2"
+                >
+                  {bulkLoading ? (
+                    <><i className="pi pi-spinner pi-spin"></i><span>Importing...</span></>
+                  ) : (
+                    <><i className="pi pi-upload"></i><span>Import Co-Workers</span></>
+                  )}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

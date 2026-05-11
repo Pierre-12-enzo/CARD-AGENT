@@ -1,27 +1,28 @@
 // pages/dashboard/Organizations.jsx - CARD-AGENT NAVY & CRIMSON
 import React, { useState, useEffect, useRef } from 'react';
 import { organizationAPI } from '../../services/api';
-import { useAuth } from '../../context/AuthContext';
+import toast from 'react-hot-toast';
 
 const Organizations = () => {
-  const { user } = useAuth();
-  
+
+
   // ==================== STATE ====================
   const [organizations, setOrganizations] = useState([]);
   const [filteredOrgs, setFilteredOrgs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({ total: 0, schools: 0, corporate: 0, totalPeople: 0 });
-  
+
   // Modals
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingOrg, setEditingOrg] = useState(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(null);
+  const [deleting, setDeleting] = useState(false);
   const [viewingOrg, setViewingOrg] = useState(null);
-  
+
   // Search & Filters
   const [searchTerm, setSearchTerm] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
-  
+
   // Form
   const [formData, setFormData] = useState({
     name: '', type: 'secondary', level: 'mixed',
@@ -31,7 +32,7 @@ const Organizations = () => {
   });
   const [formErrors, setFormErrors] = useState({});
   const [saving, setSaving] = useState(false);
-  
+
   const modalRef = useRef(null);
   const fileInputRef = useRef(null);
 
@@ -50,8 +51,9 @@ const Organizations = () => {
       const response = await organizationAPI.getAll({ limit: 100 });
       if (response.success) {
         const orgs = response.organizations || [];
+        // console.log('📦 First org full data:', orgs[0]); // 🔥 ADD THIS
         setOrganizations(orgs);
-        
+
         // Calculate stats
         const schools = orgs.filter(o => o.type !== 'corporate').length;
         const corporate = orgs.filter(o => o.type === 'corporate').length;
@@ -67,7 +69,7 @@ const Organizations = () => {
 
   const filterOrganizations = () => {
     let filtered = organizations;
-    
+
     if (searchTerm) {
       const term = searchTerm.toLowerCase();
       filtered = filtered.filter(o =>
@@ -76,11 +78,11 @@ const Organizations = () => {
         o.email?.toLowerCase().includes(term)
       );
     }
-    
+
     if (typeFilter !== 'all') {
       filtered = filtered.filter(o => o.type === typeFilter);
     }
-    
+
     setFilteredOrgs(filtered);
   };
 
@@ -127,7 +129,7 @@ const Organizations = () => {
     e.preventDefault();
     if (!validateForm()) return;
     setSaving(true);
-    
+
     try {
       const submitData = new FormData();
       submitData.append('name', formData.name);
@@ -144,10 +146,15 @@ const Organizations = () => {
 
       if (editingOrg) {
         await organizationAPI.update(editingOrg._id, submitData);
+
+        toast.success(`${editingOrg.name} updated successfully!`, {
+          icon: '🗑️',
+          style: { borderRadius: '12px', background: '#0F172A', color: '#fff' }
+        })
       } else {
         await organizationAPI.create(submitData);
       }
-      
+
       resetForm();
       loadOrganizations();
     } catch (error) {
@@ -159,6 +166,7 @@ const Organizations = () => {
   };
 
   const handleEdit = (org) => {
+    setFormErrors({});
     setEditingOrg(org);
     setFormData({
       name: org.name || '',
@@ -177,26 +185,30 @@ const Organizations = () => {
     setShowAddModal(true);
   };
 
-  const handleDelete = async (org) => {
-    const hasPeople = (org.stats?.total || org.stats?.totalPeople || 0) > 0;
-    if (hasPeople) {
-      if (!confirm(`"${org.name}" has ${org.stats?.total || org.stats?.totalPeople} records. Deactivate instead?`)) return;
-      try {
-        await organizationAPI.delete(org._id);
+  const handleDelete = async () => {
+    if (!showDeleteConfirm) return;
+    setDeleting(true);
+
+    try {
+      // 🔥 Delete permanently (with all associated data)
+      const response = await organizationAPI.delete(showDeleteConfirm._id + '?permanent=true');
+
+      if (response.success) {
+        toast.success(`${showDeleteConfirm.name} deleted successfully!`, {
+          icon: '🗑️',
+          style: { borderRadius: '12px', background: '#0F172A', color: '#fff' }
+        });
+        setShowDeleteConfirm(null);
         loadOrganizations();
-      } catch (error) {
-        alert('Failed to delete: ' + error.message);
+      } else {
+        toast.error(response.error || 'Failed to delete organization');
       }
-    } else {
-      if (!confirm(`Permanently delete "${org.name}"?`)) return;
-      try {
-        await organizationAPI.delete(org._id);
-        loadOrganizations();
-      } catch (error) {
-        alert('Failed to delete: ' + error.message);
-      }
+    } catch (error) {
+      console.error('Delete error:', error);
+      toast.error(error.response?.data?.error || 'Failed to delete organization');
+    } finally {
+      setDeleting(false);
     }
-    setShowDeleteConfirm(null);
   };
 
   const handleViewDetails = async (org) => {
@@ -324,8 +336,8 @@ const Organizations = () => {
                 <div className="flex items-start justify-between mb-3">
                   <div className="flex items-center space-x-3">
                     <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center text-2xl overflow-hidden border border-slate-200">
-                      {org.logo ? (
-                        <img src={org.logo} alt={org.name} className="w-full h-full object-cover" />
+                      {org.logo?.url ? (
+                        <img src={org.logo?.url} alt={org.name} className="w-full h-full object-cover" />
                       ) : (
                         getTypeIcon(org.type)
                       )}
@@ -551,32 +563,61 @@ const Organizations = () => {
         </div>
       )}
 
-      {/* Delete Confirmation */}
+
+      {/* Delete Confirmation Modal */}
       {showDeleteConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 animate-scale-in">
             <div className="text-center">
-              <div className="w-14 h-14 bg-red-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
-                <i className="pi pi-exclamation-triangle text-red-600 text-2xl"></i>
+              <div className="w-16 h-16 bg-red-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                <i className="pi pi-exclamation-triangle text-red-600 text-3xl"></i>
               </div>
-              <h3 className="text-lg font-bold text-slate-800 mb-2">Delete Organization?</h3>
+              <h3 className="text-xl font-bold text-slate-800 mb-2">Delete Organization?</h3>
               <p className="text-slate-500 text-sm mb-1">
-                Are you sure you want to delete <span className="font-semibold text-slate-700">"{showDeleteConfirm.name}"</span>?
+                You are about to permanently delete{" "}
+                <span className="font-semibold text-slate-700">"{showDeleteConfirm.name}"</span>.
               </p>
-              {(showDeleteConfirm.stats?.total || showDeleteConfirm.stats?.totalPeople || 0) > 0 && (
-                <p className="text-amber-600 text-sm bg-amber-50 rounded-lg p-2 mt-2">
-                  This organization has {showDeleteConfirm.stats?.total || showDeleteConfirm.stats?.totalPeople} records. It will be soft-deleted.
-                </p>
-              )}
+
+              {/* Show what will be deleted */}
+              <div className="bg-red-50 border border-red-200 rounded-xl p-4 mt-4 text-left">
+                <p className="text-sm font-semibold text-red-800 mb-2">This will permanently delete:</p>
+                <ul className="text-sm text-red-700 space-y-1 list-disc list-inside">
+                  <li>All students & employees ({showDeleteConfirm.stats?.total || 0})</li>
+                  <li>All their photos from cloud storage</li>
+                  <li>All card generation history</li>
+                  <li>All templates ({showDeleteConfirm.stats?.templates || 0})</li>
+                </ul>
+              </div>
+
+              <p className="text-sm text-red-600 font-semibold mt-4">
+                ⚠️ This action cannot be undone!
+              </p>
             </div>
+
             <div className="flex gap-3 mt-6">
-              <button onClick={() => setShowDeleteConfirm(null)}
-                className="flex-1 py-2.5 border border-slate-300 rounded-xl text-slate-700 font-medium hover:bg-slate-50">
+              <button
+                onClick={() => setShowDeleteConfirm(null)}
+                disabled={deleting}
+                className="flex-1 py-2.5 border border-slate-300 rounded-xl text-slate-700 font-medium hover:bg-slate-50 transition-colors"
+              >
                 Cancel
               </button>
-              <button onClick={() => handleDelete(showDeleteConfirm)}
-                className="flex-1 py-2.5 bg-red-600 text-white rounded-xl font-medium hover:bg-red-700">
-                Delete
+              <button
+                onClick={handleDelete}
+                disabled={deleting}
+                className="flex-1 py-2.5 bg-red-600 text-white rounded-xl font-medium hover:bg-red-700 disabled:opacity-50 transition-colors flex items-center justify-center space-x-2"
+              >
+                {deleting ? (
+                  <>
+                    <i className="pi pi-spinner pi-spin"></i>
+                    <span>Deleting...</span>
+                  </>
+                ) : (
+                  <>
+                    <i className="pi pi-trash"></i>
+                    <span>Delete Permanently</span>
+                  </>
+                )}
               </button>
             </div>
           </div>
@@ -610,7 +651,7 @@ const Organizations = () => {
               {viewingOrg.website && <DetailRow icon="pi pi-globe" label="Website" value={viewingOrg.website} />}
               <DetailRow icon="pi pi-map-marker" label="Address"
                 value={`${viewingOrg.address?.sector || ''}, ${viewingOrg.address?.district || ''}, ${viewingOrg.address?.province || ''}`} />
-              
+
               <div className="border-t border-slate-200 pt-3 mt-3">
                 <h4 className="font-semibold text-slate-700 mb-2">Statistics</h4>
                 <div className="grid grid-cols-3 gap-2 text-center">

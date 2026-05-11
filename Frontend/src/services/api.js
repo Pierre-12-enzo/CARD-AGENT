@@ -213,7 +213,7 @@ export const companyAPI = {
 // ============================================
 export const organizationAPI = {
   getAll: async (params = {}) => {
-    const response = await api.get('/company/organizations', { params });
+    const response = await api.get('/organizations', { params });
     return response.data;
   },
 
