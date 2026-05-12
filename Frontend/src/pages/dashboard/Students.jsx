@@ -1,10 +1,12 @@
-// pages/dashboard/Students.jsx - CARD-AGENT NAVY & CRIMSON
+// pages/dashboard/Students.jsx - CARD-AGENT with Smart Level Selection + Employee ID Protection
 import React, { useState, useEffect, useRef } from 'react';
 import { studentAPI, organizationAPI } from '../../services/api';
+import { useAuth } from '../../context/AuthContext';
 import * as XLSX from 'xlsx';
 import toast from 'react-hot-toast';
 
 const Students = () => {
+  const { user } = useAuth();
 
   // ==================== STATE ====================
   const [organizations, setOrganizations] = useState([]);
@@ -20,6 +22,14 @@ const Students = () => {
   const [showPhotoModal, setShowPhotoModal] = useState(false);
   const [selectedPhoto, setSelectedPhoto] = useState(null);
   const [showBulkImport, setShowBulkImport] = useState(false);
+
+  // Bulk Import State
+  const [csvFile, setCsvFile] = useState(null);
+  const [photoZipFile, setPhotoZipFile] = useState(null);
+  const [bulkPreview, setBulkPreview] = useState([]);
+  const [importProgress, setImportProgress] = useState(null);
+  const [bulkLoading, setBulkLoading] = useState(false);
+  const [bulkResults, setBulkResults] = useState(null);
 
   // Search & Filters
   const [searchTerm, setSearchTerm] = useState('');
@@ -40,12 +50,9 @@ const Students = () => {
     gender: '', residence: '', phone: '', email: '',
     photo: null
   });
-
-  // Bulk Import
-  const [csvFile, setCsvFile] = useState(null);
-  const [photoZipFile, setPhotoZipFile] = useState(null);
-  const [importProgress, setImportProgress] = useState(null);
-  const [uploadProgress, setUploadProgress] = useState(0);
+  const [formErrors, setFormErrors] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [idWarning, setIdWarning] = useState('');
 
   const modalRef = useRef(null);
 
@@ -76,7 +83,6 @@ const Students = () => {
       const response = await organizationAPI.getAll({ limit: 100 });
       if (response.success) {
         setOrganizations(response.organizations || []);
-        // Auto-select first org if none selected
         if (!selectedOrg && response.organizations?.length > 0) {
           setSelectedOrg(response.organizations[0]);
         }
@@ -92,7 +98,7 @@ const Students = () => {
     if (!selectedOrg?._id) return;
     setLoading(true);
     try {
-      const response = await studentAPI.getByOrganization(selectedOrg._id, { limit: 200 });
+      const response = await studentAPI.getByOrganization(selectedOrg._id, { limit: 500 });
       if (response.success) {
         setStudents(response.students || []);
       }
@@ -114,6 +120,78 @@ const Students = () => {
     } catch (error) {
       console.error('Failed to load filter options:', error);
     }
+  };
+
+  // ==================== SMART LEVEL LOGIC ====================
+
+  /**
+   * Get the default level based on organization type and level setting
+   */
+  const getDefaultLevel = () => {
+    if (!selectedOrg) return '';
+
+    const orgLevel = selectedOrg.level;
+    const orgType = selectedOrg.type;
+
+    // Corporate - no level
+    if (orgType === 'corporate') return 'n_a';
+
+    // Primary - fixed to "Primary"
+    if (orgType === 'primary') return 'Primary';
+
+    // Based on organization's level setting
+    switch (orgLevel) {
+      case 'o_level': return 'O-Level';
+      case 'a_level': return 'A-Level';
+      case 'tvet': return 'L3';
+      case 'primary': return 'Primary';
+      case 'mixed': return ''; // User must choose
+      default: return '';
+    }
+  };
+
+  /**
+   * Get available level options based on organization
+   */
+  const getLevelOptions = () => {
+    if (!selectedOrg) return [];
+
+    const orgLevel = selectedOrg.level;
+    const orgType = selectedOrg.type;
+
+    if (orgType === 'corporate') return [{ value: 'n_a', label: 'N/A' }];
+    if (orgType === 'primary') return [{ value: 'Primary', label: 'Primary' }];
+
+    switch (orgLevel) {
+      case 'o_level': return [{ value: 'O-Level', label: 'O-Level' }];
+      case 'a_level': return [{ value: 'A-Level', label: 'A-Level' }];
+      case 'tvet': return [
+        { value: 'L3', label: 'L3' },
+        { value: 'L4', label: 'L4' },
+        { value: 'L5', label: 'L5' }
+      ];
+      case 'mixed': return [
+        { value: 'O-Level', label: 'O-Level' },
+        { value: 'A-Level', label: 'A-Level' }
+      ];
+      case 'primary': return [{ value: 'Primary', label: 'Primary' }];
+      default: return [
+        { value: 'O-Level', label: 'O-Level' },
+        { value: 'A-Level', label: 'A-Level' }
+      ];
+    }
+  };
+
+  /**
+   * Check if level field should be disabled (locked to one value)
+   */
+  const isLevelLocked = () => {
+    if (!selectedOrg) return false;
+    const orgLevel = selectedOrg.level;
+    const orgType = selectedOrg.type;
+
+    if (orgType === 'corporate' || orgType === 'primary') return true;
+    return ['o_level', 'a_level', 'primary'].includes(orgLevel);
   };
 
   // ==================== FILTERING ====================
@@ -153,15 +231,56 @@ const Students = () => {
     setCurrentPage(1);
   };
 
+  const validateStudentId = (id, personType) => {
+    if (!id || !id.trim()) {
+      if (personType === 'employee') return '';
+      return 'Student ID is required';
+    }
+
+    if (personType === 'student') {
+      const exists = students.find(s =>
+        s.student_id?.toLowerCase() === id.trim().toLowerCase() &&
+        s._id !== editingStudent?._id
+      );
+      if (exists) {
+        return `⚠️ Student ID "${id}" already exists (${exists.name})`;
+      }
+
+      if (!/^[A-Za-z0-9]+-\d{3,}$/.test(id) && !/^[A-Za-z0-9]+$/.test(id)) {
+        return '💡 Recommended format: ClassName-Number (e.g., S1A-001)';
+      }
+    }
+
+    return '';
+  };
+
   const handleInputChange = (e) => {
     const { name, value, files } = e.target;
+
     if (name === 'photo' && files?.[0]) {
       const file = files[0];
-      if (file.size > 5 * 1024 * 1024) { alert('Photo too large! Max 5MB'); return; }
+      if (file.size > 5 * 1024 * 1024) { toast.error('Photo too large! Max 5MB'); return; }
       setFormData(prev => ({ ...prev, photo: file }));
+    } else if (name === 'student_id') {
+      setFormData(prev => ({ ...prev, student_id: value }));
+      const warning = validateStudentId(value, formData.personType);
+      setIdWarning(warning);
     } else {
       setFormData(prev => ({ ...prev, [name]: value }));
     }
+
+    if (formErrors[name]) setFormErrors(prev => ({ ...prev, [name]: '' }));
+  };
+
+  const handlePersonTypeChange = (type) => {
+    setFormData(prev => ({
+      ...prev,
+      personType: type,
+      student_id: type === 'employee' ? '' : prev.student_id,
+      level: getDefaultLevel()
+    }));
+    setIdWarning('');
+    setFormErrors({});
   };
 
   const handleEdit = (student) => {
@@ -171,7 +290,7 @@ const Students = () => {
       name: student.name || '',
       personType: student.personType || 'student',
       class: student.studentDetails?.class || '',
-      level: student.studentDetails?.level || '',
+      level: student.studentDetails?.level || getDefaultLevel(),
       academic_year: student.studentDetails?.academic_year || '',
       parent_phone: student.studentDetails?.parent_phone || '',
       department: student.employeeDetails?.department || '',
@@ -184,22 +303,52 @@ const Students = () => {
       email: student.email || '',
       photo: null
     });
+    setIdWarning('');
+    setFormErrors({});
     setShowAddModal(true);
+  };
+
+  const validateForm = () => {
+    const errors = {};
+
+    if (!formData.name.trim()) errors.name = 'Name is required';
+
+    if (formData.personType === 'student' && !formData.student_id.trim()) {
+      errors.student_id = 'Student ID is required';
+    }
+
+    if (formData.personType === 'student' && formData.student_id.trim()) {
+      const exists = students.find(s =>
+        s.student_id?.toLowerCase() === formData.student_id.trim().toLowerCase() &&
+        s._id !== editingStudent?._id
+      );
+      if (exists) {
+        errors.student_id = `ID already taken by ${exists.name}`;
+      }
+    }
+
+    setFormErrors(errors);
+    return Object.keys(errors).length === 0;
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setLoading(true);
+    if (!validateForm()) return;
+
+    setSaving(true);
     try {
       const submitData = new FormData();
       submitData.append('organizationId', selectedOrg._id);
       submitData.append('name', formData.name);
-      submitData.append('student_id', formData.student_id);
       submitData.append('personType', formData.personType);
       submitData.append('gender', formData.gender);
       submitData.append('residence', formData.residence);
       submitData.append('phone', formData.phone);
       submitData.append('email', formData.email);
+
+      if (formData.student_id.trim()) {
+        submitData.append('student_id', formData.student_id.trim());
+      }
 
       if (formData.personType === 'student') {
         submitData.append('class', formData.class);
@@ -209,121 +358,57 @@ const Students = () => {
       } else {
         submitData.append('department', formData.department);
         submitData.append('position', formData.position);
-        submitData.append('employeeId', formData.employeeId);
+        if (formData.employeeId) submitData.append('employeeId', formData.employeeId);
         submitData.append('workPhone', formData.workPhone);
       }
 
       if (formData.photo instanceof File) submitData.append('photo', formData.photo);
 
       if (editingStudent) {
-        await studentAPI.update(editingStudent._id, submitData);
+        const res = await studentAPI.update(editingStudent._id, submitData);
+        if (res.success || !res.error) {
+          toast.success('Record updated successfully!');
+          resetForm();
+          loadStudents();
+        }
       } else {
-        await studentAPI.create(submitData);
+        const res = await studentAPI.create(submitData);
+        if (res.success || res._id) {
+          toast.success(`${formData.personType === 'student' ? 'Student' : 'Employee'} created successfully!`);
+          resetForm();
+          loadStudents();
+        }
       }
-
-      resetForm();
-      loadStudents();
     } catch (error) {
       console.error('Save error:', error);
-      alert('Failed to save: ' + (error.response?.data?.error || error.message));
+      toast.error(error.response?.data?.error || 'Failed to save');
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   };
 
   const handleDelete = async (studentId, studentName) => {
-    if (!confirm(`Delete "${studentName}"? This cannot be undone.`)) return;
+    if (!window.confirm(`Delete "${studentName}"? This cannot be undone.`)) return;
     try {
       await studentAPI.delete(studentId);
+      toast.success('Deleted successfully');
       loadStudents();
     } catch (error) {
-      alert('Failed to delete: ' + error.message);
+      toast.error('Failed to delete');
     }
-  };
-
-  const handleBulkImport = async (withPhotos = false) => {
-    if (!csvFile || !selectedOrg) return;
-    setLoading(true);
-    setImportProgress({ status: 'uploading', message: 'Uploading...' });
-
-    try {
-      let result;
-      if (withPhotos) {
-        result = await studentAPI.bulkImportWithPhotos(selectedOrg._id, csvFile, photoZipFile);
-      } else {
-        result = await studentAPI.bulkImportCSV(selectedOrg._id, csvFile);
-      }
-
-      setImportProgress({ status: 'success', message: `Done! ${result.results?.created || 0} created, ${result.results?.updated || 0} updated` });
-      loadStudents();
-      setTimeout(() => setImportProgress(null), 5000);
-    } catch (error) {
-      setImportProgress({ status: 'error', message: error.message });
-      setTimeout(() => setImportProgress(null), 5000);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Download Student import template
-  const downloadStudentTemplate = () => {
-    const template = [
-      {
-        student_id: 'STU001',
-        name: 'John Doe',
-        class: 'S1A',
-        level: 'O-Level',
-        gender: 'Male',
-        residence: 'Kigali',
-        academic_year: '2026',
-        parent_phone: '0788123456'
-      }
-    ];
-
-    const ws = XLSX.utils.json_to_sheet(template);
-    ws['!cols'] = Array(8).fill({ wch: 18 });
-
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Students Template');
-    XLSX.writeFile(wb, 'students_import_template.xlsx');
-  };
-
-  // Download Employee import template
-  const downloadEmployeeTemplate = () => {
-    const template = [
-      {
-        student_id: 'EMP001',
-        name: 'Jane Smith',
-        department: 'Finance',
-        position: 'Accountant',
-        gender: 'Female',
-        residence: 'Kigali',
-        phone: '0788123456',
-        email: 'jane@company.com'
-      }
-    ];
-
-    const ws = XLSX.utils.json_to_sheet(template);
-    ws['!cols'] = Array(8).fill({ wch: 18 });
-
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Employees Template');
-    XLSX.writeFile(wb, 'employees_import_template.xlsx');
   };
 
   const resetForm = () => {
     setFormData({
       student_id: '', name: '', personType: 'student',
-      class: '', level: '', academic_year: '', parent_phone: '',
+      class: '', level: getDefaultLevel(), academic_year: '', parent_phone: '',
       department: '', position: '', employeeId: '', workPhone: '',
       gender: '', residence: '', phone: '', email: '', photo: null
     });
+    setFormErrors({});
+    setIdWarning('');
     setEditingStudent(null);
     setShowAddModal(false);
-    setShowBulkImport(false);
-    setCsvFile(null);
-    setPhotoZipFile(null);
-    setImportProgress(null);
   };
 
   const resetFilters = () => {
@@ -337,11 +422,157 @@ const Students = () => {
     if (page >= 1 && page <= totalPages) setCurrentPage(page);
   };
 
-  // ==================== STATS ====================
+  // ==================== BULK IMPORT FUNCTIONS ====================
+
+  const downloadStudentTemplate = () => {
+    const template = [
+      {
+        student_id: 'S1A-001',
+        name: 'John Doe',
+        class: 'S1A',
+        level: 'O-Level',
+        gender: 'Male',
+        residence: 'Kigali',
+        academic_year: '2026',
+        parent_phone: '0788123456'
+      },
+      {
+        student_id: 'S1A-002',
+        name: 'Alice Smith',
+        class: 'S1A',
+        level: 'O-Level',
+        gender: 'Female',
+        residence: 'Musanze',
+        academic_year: '2026',
+        parent_phone: '0788987654'
+      }
+    ];
+
+    const ws = XLSX.utils.json_to_sheet(template);
+    ws['!cols'] = [
+      { wch: 12 }, { wch: 20 }, { wch: 8 }, { wch: 10 },
+      { wch: 8 }, { wch: 12 }, { wch: 12 }, { wch: 14 }
+    ];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Students Template');
+    XLSX.writeFile(wb, 'students_import_template.xlsx');
+    toast.success('Student template downloaded!');
+  };
+
+  const downloadEmployeeTemplate = () => {
+    const template = [
+      {
+        employeeId: 'MON-001',
+        name: 'Jane Smith',
+        department: 'Finance',
+        position: 'Accountant',
+        gender: 'Female',
+        residence: 'Kigali',
+        phone: '0788123456',
+        email: 'jane@company.com',
+        note: 'Leave employeeId blank for auto-generation'
+      },
+      {
+        employeeId: 'MON-002',
+        name: 'Bob Johnson',
+        department: 'HR',
+        position: 'Manager',
+        gender: 'Male',
+        residence: 'Gisenyi',
+        phone: '0788987654',
+        email: 'bob@company.com',
+        note: 'Leave employeeId blank for auto-generation'
+      }
+    ];
+
+    const ws = XLSX.utils.json_to_sheet(template);
+    ws['!cols'] = [
+      { wch: 12 }, { wch: 20 }, { wch: 14 }, { wch: 14 },
+      { wch: 8 }, { wch: 12 }, { wch: 14 }, { wch: 25 }, { wch: 30 }
+    ];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Employees Template');
+    XLSX.writeFile(wb, 'employees_import_template.xlsx');
+    toast.success('Employee template downloaded!');
+  };
+
+  const handleCsvFileSelect = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setCsvFile(file);
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const data = new Uint8Array(evt.target.result);
+        const workbook = XLSX.read(data, { type: 'array' });
+        const sheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[sheetName];
+        const jsonData = XLSX.utils.sheet_to_json(worksheet);
+        setBulkPreview(jsonData.slice(0, 5));
+      } catch (error) {
+        console.error('Parse error:', error);
+        toast.error('Failed to parse file');
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  const handleBulkImport = async (withPhotos = false) => {
+    if (!csvFile || !selectedOrg) {
+      toast.error('Select an organization and upload a file');
+      return;
+    }
+
+    setBulkLoading(true);
+    setImportProgress({ status: 'uploading', message: 'Uploading...' });
+
+    try {
+      let result;
+      if (withPhotos && photoZipFile) {
+        result = await studentAPI.bulkImportWithPhotos(selectedOrg._id, csvFile, photoZipFile);
+      } else {
+        result = await studentAPI.bulkImportCSV(selectedOrg._id, csvFile);
+      }
+
+      if (result.success) {
+        setBulkResults({
+          created: result.results?.created || 0,
+          updated: result.results?.updated || 0,
+          skipped: result.results?.skipped || 0,
+          errors: result.results?.errors || [],
+          withPhotos: result.results?.withPhotos || 0
+        });
+        toast.success(`Import complete! ${result.results?.created || 0} created, ${result.results?.updated || 0} updated`);
+        loadStudents();
+      } else {
+        toast.error(result.error || 'Import failed');
+      }
+    } catch (error) {
+      console.error('Import error:', error);
+      toast.error('Import failed: ' + (error.response?.data?.error || error.message));
+    } finally {
+      setBulkLoading(false);
+      setImportProgress(null);
+    }
+  };
+
+  const resetBulkImport = () => {
+    setShowBulkImport(false);
+    setCsvFile(null);
+    setPhotoZipFile(null);
+    setBulkPreview([]);
+    setBulkResults(null);
+    setImportProgress(null);
+  };
+
+  // ==================== COMPUTED ====================
   const studentCount = students.filter(s => s.personType === 'student').length;
   const employeeCount = students.filter(s => s.personType === 'employee').length;
   const withPhotos = students.filter(s => s.has_photo).length;
   const cardsGenerated = students.filter(s => s.card_generated).length;
+  const levelOptions = getLevelOptions();
+  const levelLocked = isLevelLocked();
 
   return (
     <div className="p-4 sm:p-6 space-y-6">
@@ -364,7 +595,7 @@ const Students = () => {
             <span>Bulk Import</span>
           </button>
           <button
-            onClick={() => { setEditingStudent(null); setFormData(prev => ({ ...prev, student_id: '', name: '' })); setShowAddModal(true); }}
+            onClick={() => { setEditingStudent(null); setFormData(prev => ({ ...prev, student_id: '', name: '', level: getDefaultLevel() })); setIdWarning(''); setShowAddModal(true); }}
             className="px-4 py-2.5 bg-gradient-to-r from-red-600 to-red-500 hover:from-red-700 hover:to-red-600 text-white rounded-xl font-medium transition-all flex items-center space-x-2 shadow-lg"
           >
             <i className="pi pi-user-plus"></i>
@@ -390,17 +621,14 @@ const Students = () => {
                   key={org._id}
                   onClick={() => handleOrgChange(org)}
                   className={`px-4 py-2 rounded-xl text-sm font-medium transition-all ${selectedOrg?._id === org._id
-                    ? 'bg-red-600 text-white shadow-lg shadow-red-500/30'
-                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200'
+                      ? 'bg-red-600 text-white shadow-lg shadow-red-500/30'
+                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200'
                     }`}
                 >
                   <span className="capitalize">{org.type === 'corporate' ? '🏢' : '🏫'}</span> {org.name}
-                  <span className="ml-2 text-xs opacity-75">({org.stats?.total || org.stats?.totalPeople || 0})</span>
+                  <span className="ml-2 text-xs opacity-75">({org.stats?.total || 0})</span>
                 </button>
               ))}
-              {organizations.length === 0 && (
-                <span className="text-slate-400 text-sm">No organizations yet. Create one first.</span>
-              )}
             </div>
           )}
         </div>
@@ -443,28 +671,16 @@ const Students = () => {
           </div>
         </div>
 
-        {/* Filter Panel */}
         {showFilters && (
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 p-4 bg-slate-50 rounded-xl border border-slate-200 animate-slide-down">
             <FilterSelect label="Type" name="personType" value={filters.personType} onChange={(e) => { setFilters(prev => ({ ...prev, personType: e.target.value })); setCurrentPage(1); }}
               options={[{ value: '', label: 'All' }, { value: 'student', label: 'Students' }, { value: 'employee', label: 'Employees' }]} />
             <FilterSelect label="Gender" name="gender" value={filters.gender} onChange={(e) => { setFilters(prev => ({ ...prev, gender: e.target.value })); setCurrentPage(1); }}
-              options={[{ value: '', label: 'All' }, ...(filterOptions.genders || []).map(g => ({ value: g, label: g }))]} />
+              options={[{ value: '', label: 'All' }, { value: 'Male', label: 'Male' }, { value: 'Female', label: 'Female' }]} />
             <FilterSelect label="Photo" name="hasPhoto" value={filters.hasPhoto} onChange={(e) => { setFilters(prev => ({ ...prev, hasPhoto: e.target.value })); setCurrentPage(1); }}
               options={[{ value: '', label: 'All' }, { value: 'true', label: 'With Photo' }, { value: 'false', label: 'No Photo' }]} />
             <FilterSelect label="Card" name="cardGenerated" value={filters.cardGenerated} onChange={(e) => { setFilters(prev => ({ ...prev, cardGenerated: e.target.value })); setCurrentPage(1); }}
               options={[{ value: '', label: 'All' }, { value: 'true', label: 'Generated' }, { value: 'false', label: 'Pending' }]} />
-          </div>
-        )}
-
-        {/* Active Filters */}
-        {(searchTerm || Object.values(filters).some(f => f)) && (
-          <div className="mt-3 text-sm text-slate-500">
-            <i className="pi pi-info-circle mr-1 text-red-500"></i>
-            Found <span className="font-semibold text-slate-700">{filteredStudents.length}</span> records
-            {searchTerm && <span> • Search: "{searchTerm}"</span>}
-            {filters.personType && <span> • {filters.personType}</span>}
-            {filters.gender && <span> • {filters.gender}</span>}
           </div>
         )}
       </div>
@@ -485,7 +701,7 @@ const Students = () => {
                     <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Name</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Type</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Class/Dept</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Gender</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Level</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Photo</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Card</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Actions</th>
@@ -504,8 +720,8 @@ const Students = () => {
                       </td>
                       <td className="px-4 py-3">
                         <span className={`text-xs font-medium px-2 py-1 rounded-full ${student.personType === 'student'
-                          ? 'bg-blue-100 text-blue-700'
-                          : 'bg-purple-100 text-purple-700'
+                            ? 'bg-blue-100 text-blue-700'
+                            : 'bg-purple-100 text-purple-700'
                           }`}>
                           {student.personType === 'student' ? '🎓 Student' : '💼 Employee'}
                         </span>
@@ -515,7 +731,9 @@ const Students = () => {
                           ? student.studentDetails?.class || 'N/A'
                           : student.employeeDetails?.department || 'N/A'}
                       </td>
-                      <td className="px-4 py-3 text-sm text-slate-600">{student.gender || 'N/A'}</td>
+                      <td className="px-4 py-3 text-sm text-slate-600">
+                        {student.studentDetails?.level || 'N/A'}
+                      </td>
                       <td className="px-4 py-3">
                         {student.has_photo ? (
                           <button onClick={() => { setSelectedPhoto({ url: student.photo_url, name: student.name, id: student.student_id }); setShowPhotoModal(true); }}
@@ -528,13 +746,9 @@ const Students = () => {
                       </td>
                       <td className="px-4 py-3">
                         {student.card_generated ? (
-                          <span className="text-xs font-medium text-green-600 bg-green-50 px-2 py-1 rounded-full">
-                            Ready
-                          </span>
+                          <span className="text-xs font-medium text-green-600 bg-green-50 px-2 py-1 rounded-full">Ready</span>
                         ) : (
-                          <span className="text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded-full">
-                            Pending
-                          </span>
+                          <span className="text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded-full">Pending</span>
                         )}
                       </td>
                       <td className="px-4 py-3">
@@ -594,14 +808,11 @@ const Students = () => {
             <p className="text-slate-500 text-lg font-medium">
               {selectedOrg ? 'No records found' : 'Select an organization to view records'}
             </p>
-            <p className="text-slate-400 text-sm mt-1">
-              {selectedOrg ? 'Try adjusting search or filters' : 'Choose an organization from the bar above'}
-            </p>
           </div>
         )}
       </div>
 
-      {/* Add/Edit Modal */}
+      {/* ==================== ADD/EDIT MODAL ==================== */}
       {showAddModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
           <div ref={modalRef} className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden animate-scale-in">
@@ -617,47 +828,137 @@ const Students = () => {
 
             {/* Body */}
             <div className="overflow-y-auto max-h-[calc(90vh-140px)] p-5 space-y-5">
+              {/* Organization Info */}
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+                <p className="text-xs text-slate-500">Organization</p>
+                <p className="font-medium text-slate-800 text-sm">{selectedOrg?.name}</p>
+                <p className="text-xs text-slate-500 capitalize">
+                  Type: {selectedOrg?.type} • Level: {selectedOrg?.level || 'mixed'}
+                </p>
+              </div>
+
               {/* Person Type Toggle */}
               <div className="flex gap-2">
-                <button onClick={() => setFormData(prev => ({ ...prev, personType: 'student' }))}
+                <button type="button" onClick={() => handlePersonTypeChange('student')}
                   className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-all ${formData.personType === 'student' ? 'bg-red-600 text-white' : 'bg-slate-100 text-slate-600'
                     }`}>
                   <i className="pi pi-graduation-cap mr-1"></i> Student
                 </button>
-                <button onClick={() => setFormData(prev => ({ ...prev, personType: 'employee' }))}
+                <button type="button" onClick={() => handlePersonTypeChange('employee')}
                   className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-all ${formData.personType === 'employee' ? 'bg-slate-700 text-white' : 'bg-slate-100 text-slate-600'
                     }`}>
                   <i className="pi pi-briefcase mr-1"></i> Employee
                 </button>
               </div>
 
-              {/* Common Fields */}
+              {/* ID Field */}
               <div className="grid grid-cols-2 gap-4">
-                <InputField label="ID Number *" name="student_id" value={formData.student_id} onChange={handleInputChange} />
-                <InputField label="Full Name *" name="name" value={formData.name} onChange={handleInputChange} />
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    {formData.personType === 'student' ? 'Student ID *' : 'ID Number'}
+                  </label>
+                  {formData.personType === 'employee' ? (
+                    <div className="relative">
+                      <input
+                        type="text"
+                        name="student_id"
+                        value={formData.student_id}
+                        disabled
+                        className="w-full px-3 py-2.5 border border-slate-200 bg-slate-100 rounded-xl text-sm text-slate-400 cursor-not-allowed"
+                        placeholder="Auto-generated"
+                      />
+                      <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                        <i className="pi pi-lock text-slate-400 text-xs"></i>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <input
+                        type="text"
+                        name="student_id"
+                        value={formData.student_id}
+                        onChange={handleInputChange}
+                        placeholder="e.g., S1A-001, STU001"
+                        className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:ring-2 focus:ring-red-500 ${formErrors.student_id ? 'border-red-300 bg-red-50' : idWarning && !formErrors.student_id ? 'border-amber-300 bg-amber-50' : 'border-slate-300 bg-slate-50'
+                          }`}
+                        required
+                      />
+                      {formErrors.student_id && (
+                        <p className="mt-1 text-xs text-red-500 flex items-center">
+                          <i className="pi pi-exclamation-circle mr-1"></i> {formErrors.student_id}
+                        </p>
+                      )}
+                      {idWarning && !formErrors.student_id && (
+                        <p className="mt-1 text-xs text-amber-600 flex items-center">
+                          <i className="pi pi-info-circle mr-1"></i> {idWarning}
+                        </p>
+                      )}
+                    </>
+                  )}
+                  {formData.personType === 'employee' && (
+                    <p className="mt-1 text-xs text-slate-400 flex items-center">
+                      <i className="pi pi-info-circle mr-1"></i>
+                      Auto-generated: {selectedOrg?.name?.replace(/[^a-zA-Z]/g, '').substring(0, 3)?.toUpperCase() || 'ORG'}-XXX
+                    </p>
+                  )}
+                </div>
+                <InputField label="Full Name *" name="name" value={formData.name} onChange={handleInputChange} error={formErrors.name} />
               </div>
 
-              {/* Student-specific */}
+              {/* Student-specific fields */}
               {formData.personType === 'student' && (
                 <div className="grid grid-cols-2 gap-4">
                   <InputField label="Class" name="class" value={formData.class} onChange={handleInputChange} />
-                  <InputField label="Level" name="level" value={formData.level} onChange={handleInputChange} />
+
+                  {/* 🔥 SMART LEVEL SELECTION */}
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1">Level</label>
+                    {levelLocked ? (
+                      <div className="relative">
+                        <input
+                          type="text"
+                          value={formData.level}
+                          disabled
+                          className="w-full px-3 py-2.5 border border-slate-200 bg-slate-100 rounded-xl text-sm text-slate-500 cursor-not-allowed"
+                        />
+                        <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                          <i className="pi pi-lock text-slate-400 text-xs"></i>
+                        </div>
+                        <p className="mt-1 text-xs text-slate-400">
+                          Locked to organization level ({selectedOrg?.level?.replace('_', ' ') || selectedOrg?.type})
+                        </p>
+                      </div>
+                    ) : (
+                      <select
+                        name="level"
+                        value={formData.level}
+                        onChange={handleInputChange}
+                        className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm"
+                      >
+                        <option value="">Select Level</option>
+                        {levelOptions.map(opt => (
+                          <option key={opt.value} value={opt.value}>{opt.label}</option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+
                   <InputField label="Academic Year" name="academic_year" value={formData.academic_year} onChange={handleInputChange} />
                   <InputField label="Parent Phone" name="parent_phone" value={formData.parent_phone} onChange={handleInputChange} />
                 </div>
               )}
 
-              {/* Employee-specific */}
+              {/* Employee-specific fields */}
               {formData.personType === 'employee' && (
                 <div className="grid grid-cols-2 gap-4">
                   <InputField label="Department" name="department" value={formData.department} onChange={handleInputChange} />
                   <InputField label="Position" name="position" value={formData.position} onChange={handleInputChange} />
-                  <InputField label="Employee ID" name="employeeId" value={formData.employeeId} onChange={handleInputChange} />
                   <InputField label="Work Phone" name="workPhone" value={formData.workPhone} onChange={handleInputChange} />
+                  <InputField label="Email" name="email" value={formData.email} onChange={handleInputChange} type="email" />
                 </div>
               )}
 
-              {/* Common Details */}
+              {/* Common fields */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-medium text-slate-600 mb-1">Gender</label>
@@ -668,8 +969,12 @@ const Students = () => {
                   </select>
                 </div>
                 <InputField label="Residence" name="residence" value={formData.residence} onChange={handleInputChange} />
-                <InputField label="Phone" name="phone" value={formData.phone} onChange={handleInputChange} />
-                <InputField label="Email" name="email" value={formData.email} onChange={handleInputChange} type="email" />
+                {formData.personType !== 'employee' && (
+                  <>
+                    <InputField label="Phone" name="phone" value={formData.phone} onChange={handleInputChange} />
+                    <InputField label="Email" name="email" value={formData.email} onChange={handleInputChange} type="email" />
+                  </>
+                )}
               </div>
 
               {/* Photo Upload */}
@@ -691,65 +996,173 @@ const Students = () => {
               <button onClick={resetForm} className="px-5 py-2.5 border border-slate-300 rounded-xl text-slate-700 font-medium hover:bg-slate-100">
                 Cancel
               </button>
-              <button onClick={handleSubmit} disabled={loading}
-                className="px-5 py-2.5 bg-gradient-to-r from-red-600 to-red-500 text-white rounded-xl font-medium hover:from-red-700 hover:to-red-600 disabled:opacity-50">
-                {loading ? <i className="pi pi-spinner pi-spin mr-2"></i> : null}
-                {editingStudent ? 'Update' : 'Create'}
+              <button onClick={handleSubmit} disabled={saving}
+                className="px-5 py-2.5 bg-gradient-to-r from-red-600 to-red-500 text-white rounded-xl font-medium hover:from-red-700 hover:to-red-600 disabled:opacity-50 flex items-center space-x-2">
+                {saving && <i className="pi pi-spinner pi-spin"></i>}
+                <span>{editingStudent ? 'Update' : 'Create'}</span>
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Bulk Import Modal */}
+      {/* ==================== BULK IMPORT MODAL ==================== */}
       {showBulkImport && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg animate-scale-in">
-            <div className="flex items-center justify-between p-5 border-b border-slate-200">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-hidden animate-scale-in">
+            <div className="flex items-center justify-between p-5 border-b border-slate-200 bg-slate-50">
               <h3 className="text-xl font-bold text-slate-800">Bulk Import</h3>
-              <button onClick={resetForm} className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center hover:bg-slate-300">
+              <button onClick={resetBulkImport} className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center hover:bg-slate-300">
                 <i className="pi pi-times"></i>
               </button>
             </div>
-            <div className="p-5 space-y-4">
-              <p className="text-sm text-slate-600">
-                Importing to: <span className="font-semibold text-slate-800">{selectedOrg?.name}</span>
-              </p>
-              <FileUpload label="CSV File *" accept=".csv" file={csvFile} onSelect={setCsvFile} />
-              <FileUpload label="Photos ZIP (Optional)" accept=".zip" file={photoZipFile} onSelect={setPhotoZipFile} />
 
-              {importProgress && (
-                <div className={`p-3 rounded-xl text-sm ${importProgress.status === 'success' ? 'bg-green-50 text-green-700' :
-                  importProgress.status === 'error' ? 'bg-red-50 text-red-700' : 'bg-blue-50 text-blue-700'
-                  }`}>
-                  {importProgress.status === 'uploading' && <i className="pi pi-spinner pi-spin mr-2"></i>}
-                  {importProgress.message}
+            <div className="p-5 space-y-4 overflow-y-auto max-h-[calc(90vh-140px)]">
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+                <p className="text-sm text-slate-600">
+                  Importing to: <span className="font-semibold text-slate-800">{selectedOrg?.name || 'Select an organization first'}</span>
+                </p>
+              </div>
+
+              {!bulkResults ? (
+                <>
+                  <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+                    <h4 className="font-semibold text-blue-800 mb-2">📋 Instructions</h4>
+                    <ol className="text-sm text-blue-700 space-y-1 list-decimal list-inside">
+                      <li>Download the appropriate template below</li>
+                      <li>Fill in the data (leave Employee ID blank for auto-generation)</li>
+                      <li>For photos: name each file as <code className="bg-blue-100 px-1 rounded">student_id.jpg</code></li>
+                      <li>Upload CSV + optional photos ZIP</li>
+                      <li>Click Import</li>
+                    </ol>
+                  </div>
+
+                  {/* Template Downloads */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <button onClick={downloadStudentTemplate}
+                      className="p-4 bg-red-50 border border-red-200 rounded-xl hover:bg-red-100 transition-colors text-center">
+                      <i className="pi pi-download text-red-600 text-xl mb-1 block"></i>
+                      <span className="text-sm font-medium text-red-700">Student Template</span>
+                      <p className="text-xs text-red-500 mt-1">.xlsx format</p>
+                    </button>
+                    <button onClick={downloadEmployeeTemplate}
+                      className="p-4 bg-slate-50 border border-slate-200 rounded-xl hover:bg-slate-100 transition-colors text-center">
+                      <i className="pi pi-download text-slate-600 text-xl mb-1 block"></i>
+                      <span className="text-sm font-medium text-slate-700">Employee Template</span>
+                      <p className="text-xs text-slate-500 mt-1">.xlsx format</p>
+                    </button>
+                  </div>
+
+                  {/* CSV Upload */}
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">CSV/Excel File *</label>
+                    <div className="border-2 border-dashed border-slate-300 rounded-xl p-4 text-center hover:border-red-300 transition-colors">
+                      <input type="file" accept=".csv,.xlsx,.xls" className="hidden" id="csv-upload" onChange={handleCsvFileSelect} />
+                      <label htmlFor="csv-upload" className="cursor-pointer">
+                        <i className="pi pi-file-excel text-2xl text-slate-400 mb-1 block"></i>
+                        <span className="text-sm text-slate-600">{csvFile ? csvFile.name : 'Click to upload CSV/Excel'}</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* Photo ZIP (Optional) */}
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">
+                      Photos ZIP (Optional)
+                      <span className="text-xs text-slate-400 ml-2">- name photos as student_id.jpg</span>
+                    </label>
+                    <div className="border-2 border-dashed border-slate-300 rounded-xl p-4 text-center hover:border-red-300 transition-colors">
+                      <input type="file" accept=".zip" className="hidden" id="zip-upload" onChange={(e) => setPhotoZipFile(e.target.files[0])} />
+                      <label htmlFor="zip-upload" className="cursor-pointer">
+                        <i className="pi pi-images text-2xl text-slate-400 mb-1 block"></i>
+                        <span className="text-sm text-slate-600">{photoZipFile ? photoZipFile.name : 'Click to upload photos ZIP'}</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
+                    <h4 className="text-sm font-semibold text-amber-800 mb-1">📸 Photo Naming Guide</h4>
+                    <p className="text-xs text-amber-700">
+                      Name each photo to match the <strong>student_id/employeeId</strong> in your CSV.<br />
+                      Example: <code className="bg-amber-100 px-1 rounded">S1A-001.jpg</code> or <code className="bg-amber-100 px-1 rounded">MON-001.jpg</code>
+                    </p>
+                  </div>
+
+                  {bulkPreview.length > 0 && (
+                    <div>
+                      <h4 className="font-semibold text-slate-800 mb-2">Preview (First 5 Rows)</h4>
+                      <div className="overflow-x-auto rounded-xl border border-slate-200 max-h-40">
+                        <table className="w-full text-xs">
+                          <thead className="bg-slate-50 sticky top-0">
+                            <tr>
+                              {Object.keys(bulkPreview[0]).slice(0, 8).map(key => (
+                                <th key={key} className="px-3 py-2 text-left font-semibold text-slate-600 whitespace-nowrap">{key}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {bulkPreview.map((row, i) => (
+                              <tr key={i}>
+                                {Object.values(row).slice(0, 8).map((val, j) => (
+                                  <td key={j} className="px-3 py-2 text-slate-700 whitespace-nowrap">{String(val || '')}</td>
+                                ))}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {importProgress && (
+                    <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 flex items-center space-x-3">
+                      <i className="pi pi-spinner pi-spin text-blue-600"></i>
+                      <span className="text-sm text-blue-700">{importProgress.message}</span>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="space-y-3">
+                  <h4 className="font-semibold text-slate-800">Import Results</h4>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <ResultStat label="Created" value={bulkResults.created} color="green" />
+                    <ResultStat label="Updated" value={bulkResults.updated} color="blue" />
+                    <ResultStat label="Skipped" value={bulkResults.skipped} color="amber" />
+                    <ResultStat label="With Photos" value={bulkResults.withPhotos} color="purple" />
+                  </div>
+                  {bulkResults.errors?.length > 0 && (
+                    <div className="bg-red-50 border border-red-200 rounded-xl p-4 max-h-40 overflow-y-auto">
+                      <p className="font-medium text-red-800 text-sm mb-2">Errors:</p>
+                      {bulkResults.errors.map((err, i) => (
+                        <p key={i} className="text-xs text-red-700">
+                          {err.student_id}: {err.error || err.message}
+                        </p>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
+
             <div className="flex justify-end gap-3 p-5 border-t border-slate-200 bg-slate-50">
-              <button onClick={resetForm} className="px-4 py-2 border border-slate-300 rounded-xl text-slate-700">Cancel</button>
-
-              <div className="flex gap-2">
-                <button onClick={downloadStudentTemplate}
-                  className="flex-1 py-2 bg-red-50 text-red-700 rounded-lg text-sm font-medium hover:bg-red-100">
-                  <i className="pi pi-download mr-1"></i> Student Template
-                </button>
-                <button onClick={downloadEmployeeTemplate}
-                  className="flex-1 py-2 bg-slate-100 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-200">
-                  <i className="pi pi-download mr-1"></i> Employee Template
-                </button>
-              </div>
-
-              <button onClick={() => handleBulkImport(false)} disabled={!csvFile || loading}
-                className="px-4 py-2 bg-slate-700 text-white rounded-xl hover:bg-slate-600 disabled:opacity-50">
-                Import CSV
+              <button onClick={resetBulkImport} className="px-5 py-2.5 border border-slate-300 rounded-xl text-slate-700 font-medium">
+                {bulkResults ? 'Close' : 'Cancel'}
               </button>
-              {photoZipFile && (
-                <button onClick={() => handleBulkImport(true)} disabled={!csvFile || loading}
-                  className="px-4 py-2 bg-gradient-to-r from-red-600 to-red-500 text-white rounded-xl hover:from-red-700 hover:to-red-600 disabled:opacity-50">
-                  Import + Photos
-                </button>
+              {!bulkResults && csvFile && (
+                <>
+                  <button onClick={() => handleBulkImport(false)} disabled={bulkLoading}
+                    className="px-5 py-2.5 bg-slate-700 text-white rounded-xl font-medium hover:bg-slate-600 disabled:opacity-50 flex items-center space-x-2">
+                    {bulkLoading ? <i className="pi pi-spinner pi-spin"></i> : <i className="pi pi-upload"></i>}
+                    <span>Import CSV</span>
+                  </button>
+                  {photoZipFile && (
+                    <button onClick={() => handleBulkImport(true)} disabled={bulkLoading}
+                      className="px-5 py-2.5 bg-gradient-to-r from-red-600 to-red-500 text-white rounded-xl font-medium hover:from-red-700 hover:to-red-600 disabled:opacity-50 flex items-center space-x-2">
+                      <i className="pi pi-images"></i>
+                      <span>Import + Photos</span>
+                    </button>
+                  )}
+                </>
               )}
             </div>
           </div>
@@ -765,7 +1178,7 @@ const Students = () => {
                 <p className="font-semibold text-slate-800">{selectedPhoto.name}</p>
                 <p className="text-xs text-slate-500">{selectedPhoto.id}</p>
               </div>
-              <button onClick={() => setShowPhotoModal(false)} className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center hover:bg-slate-300">
+              <button onClick={() => setShowPhotoModal(false)} className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center">
                 <i className="pi pi-times"></i>
               </button>
             </div>
@@ -783,7 +1196,7 @@ const Students = () => {
 
 const QuickStat = ({ icon, label, value, color }) => (
   <div className="bg-white rounded-xl shadow border border-slate-200/50 p-3 text-center">
-    <i className={`${icon} text-lg mb-1 ${color === 'red' ? 'text-red-500' : 'text-slate-600'}`}></i>
+    <i className={`${icon} text-lg mb-1 ${color === 'red' ? 'text-red-500' : 'text-slate-500'}`}></i>
     <p className="text-xl font-bold text-slate-800">{value}</p>
     <p className="text-xs text-slate-500">{label}</p>
   </div>
@@ -801,26 +1214,30 @@ const FilterSelect = ({ label, name, value, onChange, options }) => (
   </div>
 );
 
-const InputField = ({ label, name, value, onChange, type = 'text', required }) => (
+const InputField = ({ label, name, value, onChange, type = 'text', error, disabled }) => (
   <div>
     <label className="block text-xs font-medium text-slate-600 mb-1">{label}</label>
-    <input type={type} name={name} value={value} onChange={onChange} required={required}
-      className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm focus:ring-2 focus:ring-red-500 focus:border-red-500" />
+    <input type={type} name={name} value={value} onChange={onChange} disabled={disabled}
+      className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:ring-2 focus:ring-red-500 ${disabled ? 'border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed' :
+          error ? 'border-red-300 bg-red-50' : 'border-slate-300 bg-slate-50'
+        }`} />
+    {error && <p className="mt-1 text-xs text-red-500">{error}</p>}
   </div>
 );
 
-const FileUpload = ({ label, accept, file, onSelect }) => (
-  <div>
-    <label className="block text-sm font-medium text-slate-700 mb-1">{label}</label>
-    <div className="border-2 border-dashed border-slate-300 rounded-xl p-4 text-center hover:border-red-300 transition-colors">
-      <input type="file" accept={accept} className="hidden" id={label.replace(/\s/g, '')}
-        onChange={(e) => e.target.files[0] && onSelect(e.target.files[0])} />
-      <label htmlFor={label.replace(/\s/g, '')} className="cursor-pointer">
-        <i className="pi pi-file text-2xl text-slate-400 mb-1 block"></i>
-        <span className="text-sm text-slate-600">{file ? file.name : 'Click to upload'}</span>
-      </label>
+const ResultStat = ({ label, value, color }) => {
+  const colors = {
+    green: 'bg-green-50 text-green-700',
+    blue: 'bg-blue-50 text-blue-700',
+    amber: 'bg-amber-50 text-amber-700',
+    purple: 'bg-purple-50 text-purple-700'
+  };
+  return (
+    <div className={`rounded-xl p-3 text-center ${colors[color]}`}>
+      <p className="text-xl font-bold">{value || 0}</p>
+      <p className="text-xs">{label}</p>
     </div>
-  </div>
-);
+  );
+};
 
 export default Students;
