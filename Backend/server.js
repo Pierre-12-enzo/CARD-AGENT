@@ -20,7 +20,7 @@ const io = socketIo(server, {
     origin: function (origin, callback) {
       const allowedOrigins = [
         'http://localhost:5173',
-        'http://localhost:3000',
+        'https://agentcard.onrender.com'
       ];
       if (!origin || allowedOrigins.indexOf(origin) !== -1) {
         callback(null, true);
@@ -70,6 +70,12 @@ io.use(async (socket, next) => {
     console.error('Socket auth error:', error.message);
     next(new Error('Authentication failed'));
   }
+});
+
+// In server.js, after io.use
+io.engine.on('connection_error', (err) => {
+  console.log('❌ Socket connection error:', err.message);
+  console.log('Request:', err.req);
 });
 
 // ==================== INITIALIZE SOCKET SERVICE ====================
@@ -140,8 +146,16 @@ io.on('connection', (socket) => {
 });
 
 // ==================== EXPORT IO FOR USE IN OTHER FILES ====================
-module.exports.io = io;
-module.exports.socketService = socketService;
+
+// ✅ Store io in app locals instead of exporting directly
+app.set('io', io);
+
+// ✅ Also make it available globally for models
+global.io = io;
+
+// Then export
+module.exports = { app, server, io };
+
 
 // ==================== CORS CONFIGURATION ====================
 const allowedOrigins = [
@@ -198,6 +212,43 @@ app.use((req, res, next) => {
   next();
 });
 
+// ✅ GLOBAL AUTHENTICATION MIDDLEWARE
+const authMiddleware = require('./middleware/authMiddleware');
+
+// Public paths that don't need authentication
+const publicPaths = [
+  '/api/auth/login',
+  '/api/auth/register',
+  '/api/auth/check-email',
+  '/api/auth/forgot-password',
+  '/api/auth/reset-password',
+  '/api/health',
+  '/'
+];
+
+app.use(async (req, res, next) => {
+  const isPublicPath = publicPaths.some(path => req.path.startsWith(path));
+
+  if (isPublicPath) {
+    return next();
+  }
+
+  // Apply auth for protected routes
+  return authMiddleware(req, res, next);
+});
+
+// ✅ AUDIT MIDDLEWARE (Now req.user will be available)
+app.use(globalAudit);
+
+// API Routes
+app.use('/api/auth', require('./routes/auth'));
+app.use('/api/card', require('./routes/card'));
+app.use('/api/students', require('./routes/student'));
+app.use('/api/templates', require('./routes/templates'));
+app.use('/api/co-workers', require('./routes/co-worker.js'));
+app.use('/api/audit', require('./routes/audit'));
+app.use('/api/company', require('./routes/company'));
+app.use('/api/organizations', require('./routes/school'));
 // ==================== MONGOOSE CONNECTION ====================
 const uri = process.env.MONGO_URI;
 
@@ -261,20 +312,6 @@ app.get('/', (req, res) => {
     ]
   });
 });
-
-// Audit Middleware
-app.use(globalAudit);
-
-// API Routes
-app.use('/api/auth', require('./routes/auth'));
-app.use('/api/card', require('./routes/card'));
-app.use('/api/students', require('./routes/student'));
-app.use('/api/templates', require('./routes/templates'));
-app.use('/api/co-workers', require('./routes/co-worker.js'));
-app.use('/api/audit', require('./routes/audit'));
-app.use('/api/company', require('./routes/company'));
-app.use('/api/organizations', require('./routes/school'));
-
 
 
 // ==================== ERROR HANDLING ====================

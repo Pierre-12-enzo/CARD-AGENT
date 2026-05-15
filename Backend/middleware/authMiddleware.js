@@ -2,6 +2,7 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 
+// middleware/authMiddleware.js - Add these logs
 const authMiddleware = async (req, res, next) => {
     try {
         const token = req.header('Authorization')?.replace('Bearer ', '');
@@ -14,6 +15,7 @@ const authMiddleware = async (req, res, next) => {
         }
 
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        console.log('🔐 [AUTH] Decoded token:', decoded);
 
         const user = await User.findById(decoded.id).select('-password');
 
@@ -24,33 +26,35 @@ const authMiddleware = async (req, res, next) => {
             });
         }
 
-        if (!user.isActive) {
-            return res.status(403).json({
-                success: false,
-                message: 'Account is deactivated. Contact support.'
-            });
-        }
+        console.log('👤 [AUTH] User found:', {
+            id: user._id,
+            email: user.email,
+            role: user.role,
+            companyId: user.companyId  // ← Check if this exists
+        });
 
         // Attach user to request
         req.user = {
             id: user._id,
+            _id: user._id,
             email: user.email,
             role: user.role,
-            companyId: user.companyId,
+            companyId: user.companyId,  // ← Make sure this is set
             firstName: user.firstName,
             lastName: user.lastName,
             isActive: user.isActive,
             permissions: user.permissions || []
         };
 
-        // Shorthand access
-        req.userId = user._id;
-        req.userRole = user.role;
-        req.companyId = user.companyId;
+        console.log('✅ [AUTH] req.user set:', {
+            id: req.user.id,
+            companyId: req.user.companyId,
+            role: req.user.role
+        });
 
         next();
     } catch (error) {
-        console.error('Auth middleware error:', error);
+        console.error('❌ [AUTH] Error:', error);
         res.status(401).json({
             success: false,
             message: 'Token is not valid'

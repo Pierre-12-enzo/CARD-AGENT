@@ -149,7 +149,19 @@ export const AuthProvider = ({ children }) => {
         }
 
         //Initialize socket connection with the new token
-        initializeSocket(data.token); // ✅ Initialize socket with token after login
+        console.log('🔐 Login successful, initializing socket with token...');
+        initializeSocket(data.token);
+
+
+        // Also verify socket connected after a short delay
+        setTimeout(() => {
+          console.log('🔌 Socket connection status after login:', {
+            connected: isSocketConnected(),
+            socketId: getSocket()?.id
+          });
+        }, 1000);
+
+
         // ✅ Return the redirectTo and user data to the component
         return {
           success: true,

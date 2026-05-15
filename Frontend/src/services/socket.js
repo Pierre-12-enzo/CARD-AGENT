@@ -1,4 +1,4 @@
-// services/socket.js - COMPLETE VERSION
+// services/socket.js - FIXED VERSION
 import { io } from 'socket.io-client';
 
 let socket = null;
@@ -9,10 +9,10 @@ const getSocketUrl = () => {
     // Development
     if (window.location.hostname === 'localhost' ||
         window.location.hostname === '127.0.0.1') {
-        return 'http://localhost:5000'; // Backend port, not frontend
+        return 'http://localhost:5000'; // Backend port
     }
     // Production
-    return window.location.origin; // Use same domain
+    return window.location.origin;
 };
 
 const SOCKET_URL = getSocketUrl();
@@ -22,7 +22,7 @@ console.log('🔌 Socket URL:', SOCKET_URL);
 export const initializeSocket = (token) => {
     // Don't reinitialize if already connected with same token
     if (socket && socket.connected && currentToken === token) {
-        console.log('✅ Socket already connected');
+        console.log('✅ Socket already connected, ID:', socket.id);
         return socket;
     }
 
@@ -30,22 +30,27 @@ export const initializeSocket = (token) => {
     if (socket) {
         console.log('🔄 Disconnecting existing socket...');
         socket.disconnect();
+        socket = null;
     }
 
-    console.log('🔌 Initializing socket connection...');
+    if (!token) {
+        console.error('❌ Cannot initialize socket: No token provided');
+        return null;
+    }
 
-    // Create new socket connection with auth token
+    console.log('🔌 Initializing socket connection with token...');
+
+    // ✅ FIXED: Only use auth, not query
     socket = io(SOCKET_URL, {
         transports: ['websocket', 'polling'],
         reconnection: true,
-        reconnectionAttempts: 5,
+        reconnectionAttempts: 10,
         reconnectionDelay: 1000,
-        timeout: 10000,
+        reconnectionDelayMax: 5000,
+        timeout: 20000,
         autoConnect: true,
+        forceNew: true,
         auth: {
-            token: token
-        },
-        query: {
             token: token
         }
     });
@@ -54,21 +59,25 @@ export const initializeSocket = (token) => {
 
     // Socket event listeners
     socket.on('connect', () => {
-        console.log('✅ Socket connected successfully:', socket.id);
+        console.log('✅ Socket connected successfully! ID:', socket.id);
+        console.log('📡 Transport:', socket.io.engine.transport.name);
     });
 
     socket.on('connect_error', (error) => {
         console.error('❌ Socket connection error:', error.message);
-        // Don't clear token on auth error immediately, might be temporary
-        if (error.message === 'Authentication error') {
-            console.error('Socket authentication failed - token may be invalid');
+        console.log('📡 Will retry with polling if needed...');
+
+        // Fallback to polling if websocket fails
+        if (socket.io.engine.transport.name === 'websocket') {
+            console.log('🔄 Falling back to polling...');
         }
     });
 
     socket.on('disconnect', (reason) => {
         console.log('🔌 Socket disconnected:', reason);
         if (reason === 'io server disconnect') {
-            // Server disconnected, attempt to reconnect
+            // Server initiated disconnect, attempt to reconnect
+            console.log('🔄 Attempting to reconnect...');
             socket.connect();
         }
     });
@@ -77,8 +86,16 @@ export const initializeSocket = (token) => {
         console.log('🔄 Socket reconnected after', attemptNumber, 'attempts');
     });
 
+    socket.on('reconnect_attempt', (attemptNumber) => {
+        console.log('🔄 Reconnection attempt:', attemptNumber);
+    });
+
     socket.on('reconnect_error', (error) => {
         console.error('❌ Socket reconnection error:', error);
+    });
+
+    socket.on('reconnect_failed', () => {
+        console.error('❌ Socket reconnection failed after all attempts');
     });
 
     return socket;
@@ -87,7 +104,7 @@ export const initializeSocket = (token) => {
 // Disconnect socket
 export const disconnectSocket = () => {
     if (socket) {
-        console.log('🔌 Disconnecting socket...');
+        console.log('🔌 Manually disconnecting socket...');
         socket.disconnect();
         socket = null;
         currentToken = null;
@@ -106,6 +123,7 @@ export const isSocketConnected = () => {
 
 // Reconnect socket with new token
 export const reconnectSocket = (token) => {
+    console.log('🔄 Reconnecting socket with new token...');
     if (socket) {
         disconnectSocket();
     }

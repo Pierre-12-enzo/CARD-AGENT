@@ -1,9 +1,10 @@
-// pages/dashboard/CoWorkers.jsx - CARD-AGENT NAVY & CRIMSON
+// pages/dashboard/CoWorkers.jsx - COMPLETE REFACTORED VERSION
 import React, { useState, useEffect } from 'react';
 import { coWorkerAPI, organizationAPI } from '../../services/api';
 import { AnimatePresence, motion } from 'framer-motion';
 import * as XLSX from 'xlsx';
 import toast from 'react-hot-toast';
+
 const CoWorkers = () => {
   const [coWorkers, setCoWorkers] = useState([]);
   const [organizations, setOrganizations] = useState([]);
@@ -12,17 +13,23 @@ const CoWorkers = () => {
   const [showModal, setShowModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [selectedCoWorker, setSelectedCoWorker] = useState(null);
-  const [notification, setNotification] = useState({ show: false, type: '', message: '' });
   const [showBulkModal, setShowBulkModal] = useState(false);
   const [bulkFile, setBulkFile] = useState(null);
   const [bulkPreview, setBulkPreview] = useState([]);
   const [bulkLoading, setBulkLoading] = useState(false);
   const [bulkResults, setBulkResults] = useState(null);
 
+  // Loading states for actions
+  const [actionLoading, setActionLoading] = useState({
+    resend: null,
+    deactivate: null,
+    delete: null,
+    activate: null
+  });
 
   // Form state
   const [formData, setFormData] = useState({
-    firstName: '', lastName: '', email: '', phoneNumber: '', isActive: true,
+    firstName: '', lastName: '', email: '', phoneNumber: '',
     permissions: []
   });
 
@@ -32,6 +39,13 @@ const CoWorkers = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
   const [saving, setSaving] = useState(false);
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   useEffect(() => {
     loadData();
@@ -48,15 +62,18 @@ const CoWorkers = () => {
         coWorkerAPI.getAll(),
         organizationAPI.getAll({ limit: 100 })
       ]);
+
       if (coWorkersRes.success) {
         setCoWorkers(coWorkersRes.coWorkers || []);
         setFilteredCoWorkers(coWorkersRes.coWorkers || []);
       }
+
       if (orgsRes.success) {
         setOrganizations(orgsRes.organizations || []);
       }
     } catch (error) {
       console.error('Failed to load data:', error);
+      toast.error(error.message || 'Failed to load data');
     } finally {
       setLoading(false);
     }
@@ -78,19 +95,19 @@ const CoWorkers = () => {
     setCurrentPage(1);
   };
 
-  const showNotification = (type, message) => {
-    setNotification({ show: true, type, message });
-    setTimeout(() => setNotification({ show: false, type: '', message: '' }), 5000);
-  };
-
   const handleEdit = (coWorker) => {
+    // Only allow editing if user is active
+    if (!coWorker.isActive) {
+      toast.error('Cannot edit inactive co-worker. Please activate first.');
+      return;
+    }
+
     setSelectedCoWorker(coWorker);
     setFormData({
       firstName: coWorker.firstName || '',
       lastName: coWorker.lastName || '',
       email: coWorker.email || '',
       phoneNumber: coWorker.phoneNumber || '',
-      isActive: coWorker.isActive !== false,
       permissions: coWorker.permissions || []
     });
     setShowModal(true);
@@ -99,13 +116,18 @@ const CoWorkers = () => {
   const handleAddNew = () => {
     setSelectedCoWorker(null);
     setFormData({
-      firstName: '', lastName: '', email: '', phoneNumber: '', isActive: true,
+      firstName: '', lastName: '', email: '', phoneNumber: '',
       permissions: organizations.map(org => ({
         organizationId: org._id,
         organizationName: org.name,
-        canViewAnalytics: false, canGenerateCards: false, canManageStudents: false,
-        canManageTemplates: false, canUploadCSV: false, canUploadPhotos: false,
-        canMarkAttendance: false, canViewAuditLogs: false
+        canViewAnalytics: false,
+        canGenerateCards: false,
+        canManageStudents: false,
+        canManageTemplates: false,
+        canUploadCSV: false,
+        canUploadPhotos: false,
+        canMarkAttendance: false,
+        canViewAuditLogs: false
       }))
     });
     setShowModal(true);
@@ -122,12 +144,14 @@ const CoWorkers = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+
     if (!formData.firstName || !formData.lastName || !formData.email) {
-      showNotification('error', 'First name, last name, and email are required');
+      toast.error('First name, last name, and email are required');
       return;
     }
 
     setSaving(true);
+
     try {
       const data = {
         firstName: formData.firstName,
@@ -148,46 +172,97 @@ const CoWorkers = () => {
       }
 
       if (response.success) {
-        showNotification('success', selectedCoWorker ? 'Co-worker updated!' : 'Co-worker created! Invitation email sent.');
+        toast.success(selectedCoWorker ? 'Co-worker updated successfully!' : 'Co-worker created! Invitation email sent.');
         setShowModal(false);
         loadData();
       } else {
-        showNotification('error', response.error || 'Failed to save');
+        toast.error(response.error || 'Failed to save co-worker');
       }
     } catch (error) {
-      showNotification('error', error.message || 'Failed to save');
+      console.error('Save error:', error);
+      toast.error(error.response?.data?.error || error.message || 'Failed to save');
     } finally {
       setSaving(false);
     }
   };
 
+  // Handle Activate/Deactivate Toggle
+  const handleToggleStatus = async (coWorker) => {
+    const newStatus = !coWorker.isActive;
+    const action = newStatus ? 'activate' : 'deactivate';
+
+    setActionLoading(prev => ({ ...prev, [action]: coWorker._id }));
+
+    try {
+      const response = await coWorkerAPI.update(coWorker._id, { isActive: newStatus });
+
+      if (response.success) {
+        toast.success(newStatus ? 'Co-worker activated successfully!' : 'Co-worker deactivated successfully');
+
+        if (!newStatus) {
+          // Send deactivation email
+          toast.info('Deactivation email sent to co-worker');
+        } else {
+          // Send activation email
+          toast.info('Activation email sent to co-worker');
+        }
+
+        loadData();
+      } else {
+        toast.error(response.error || 'Failed to update status');
+      }
+    } catch (error) {
+      console.error('Status update error:', error);
+      toast.error(error.response?.data?.error || error.message || 'Failed to update status');
+    } finally {
+      setActionLoading(prev => ({ ...prev, [action]: null }));
+    }
+  };
+
   const handleDelete = async (permanent = false) => {
     if (!selectedCoWorker) return;
+
+    const action = permanent ? 'delete' : 'deactivate';
+    setActionLoading(prev => ({ ...prev, [action]: selectedCoWorker._id }));
+
     try {
       const response = await coWorkerAPI.delete(selectedCoWorker._id, permanent);
+
       if (response.success) {
-        showNotification('success', permanent ? 'Permanently deleted' : 'Deactivated successfully');
+        toast.success(permanent ? 'Co-worker permanently deleted' : 'Co-worker deactivated successfully');
         setShowDeleteModal(false);
         setSelectedCoWorker(null);
         loadData();
+      } else {
+        toast.error(response.error || 'Failed to delete');
       }
     } catch (error) {
-      showNotification('error', error.message || 'Failed to delete');
+      console.error('Delete error:', error);
+      toast.error(error.response?.data?.error || error.message || 'Failed to delete');
+    } finally {
+      setActionLoading(prev => ({ ...prev, [action]: null }));
     }
   };
 
   const handleResendInvite = async (id) => {
+    setActionLoading(prev => ({ ...prev, resend: id }));
+
     try {
       const response = await coWorkerAPI.resendInvite(id);
+
       if (response.success) {
-        showNotification('success', 'Invitation resent!');
+        toast.success('Invitation resent successfully!');
+      } else {
+        toast.error(response.error || 'Failed to resend invitation');
       }
     } catch (error) {
-      showNotification('error', error.message || 'Failed to resend');
+      console.error('Resend error:', error);
+      toast.error(error.response?.data?.error || error.message || 'Failed to resend');
+    } finally {
+      setActionLoading(prev => ({ ...prev, resend: null }));
     }
   };
 
-  // Download Co-Worker import template
   const downloadCoWorkerTemplate = () => {
     const template = [
       {
@@ -195,7 +270,7 @@ const CoWorkers = () => {
         lastName: 'Doe',
         email: 'john.doe@example.com',
         phoneNumber: '0788123456',
-        organizationName: 'Monfort',  // Must match an existing organization
+        organizationName: organizations[0]?.name || 'Organization Name',
         canManageStudents: 'YES',
         canGenerateCards: 'YES',
         canManageTemplates: 'NO',
@@ -207,8 +282,6 @@ const CoWorkers = () => {
     ];
 
     const ws = XLSX.utils.json_to_sheet(template);
-
-    // Add column widths
     ws['!cols'] = [
       { wch: 15 }, { wch: 15 }, { wch: 30 }, { wch: 15 }, { wch: 20 },
       { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 15 }, { wch: 15 },
@@ -218,9 +291,9 @@ const CoWorkers = () => {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Co-Workers Template');
     XLSX.writeFile(wb, 'co_workers_import_template.xlsx');
+    toast.success('Template downloaded!');
   };
 
-  // Handle file upload
   const handleBulkFileUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -234,7 +307,7 @@ const CoWorkers = () => {
         const sheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[sheetName];
         const jsonData = XLSX.utils.sheet_to_json(worksheet);
-        setBulkPreview(jsonData.slice(0, 5)); // Show first 5 rows
+        setBulkPreview(jsonData.slice(0, 5));
       } catch (error) {
         console.error('Error parsing file:', error);
         toast.error('Failed to parse file. Please check the format.');
@@ -243,7 +316,6 @@ const CoWorkers = () => {
     reader.readAsArrayBuffer(file);
   };
 
-  // Handle bulk import
   const handleBulkImport = async () => {
     if (!bulkFile) {
       toast.error('Please upload a file first');
@@ -265,34 +337,39 @@ const CoWorkers = () => {
         lastName: row.lastName,
         email: row.email,
         phoneNumber: row.phoneNumber?.toString(),
-        permissions: [{
-          organizationName: row.organizationName,
-          canManageStudents: String(row.canManageStudents).toUpperCase() === 'YES',
-          canGenerateCards: String(row.canGenerateCards).toUpperCase() === 'YES',
-          canManageTemplates: String(row.canManageTemplates).toUpperCase() === 'YES',
-          canUploadCSV: String(row.canUploadCSV).toUpperCase() === 'YES',
-          canUploadPhotos: String(row.canUploadPhotos).toUpperCase() === 'YES',
-          canViewAnalytics: String(row.canViewAnalytics).toUpperCase() === 'YES',
-          canViewAuditLogs: String(row.canViewAuditLogs).toUpperCase() === 'YES'
-        }]
+        organizationName: row.organizationName,
+        canManageStudents: String(row.canManageStudents).toUpperCase() === 'YES',
+        canGenerateCards: String(row.canGenerateCards).toUpperCase() === 'YES',
+        canManageTemplates: String(row.canManageTemplates).toUpperCase() === 'YES',
+        canUploadCSV: String(row.canUploadCSV).toUpperCase() === 'YES',
+        canUploadPhotos: String(row.canUploadPhotos).toUpperCase() === 'YES',
+        canViewAnalytics: String(row.canViewAnalytics).toUpperCase() === 'YES',
+        canViewAuditLogs: String(row.canViewAuditLogs).toUpperCase() === 'YES'
       }));
 
       const response = await coWorkerAPI.bulkCreate(staffList);
       setBulkResults(response.results);
 
       if (response.results?.success?.length > 0) {
-        toast.success(`${response.results.success.length} co-workers imported!`);
+        toast.success(`${response.results.success.length} co-workers imported successfully!`);
         loadData();
       }
       if (response.results?.failed?.length > 0) {
-        toast.error(`${response.results.failed.length} failed to import`);
+        toast.error(`${response.results.failed.length} co-workers failed to import`);
       }
     } catch (error) {
       console.error('Bulk import error:', error);
-      toast.error('Failed to import co-workers');
+      toast.error(error.response?.data?.error || error.message || 'Failed to import co-workers');
     } finally {
       setBulkLoading(false);
     }
+  };
+
+  const resetBulkModal = () => {
+    setShowBulkModal(false);
+    setBulkFile(null);
+    setBulkPreview([]);
+    setBulkResults(null);
   };
 
   const totalPages = Math.ceil(filteredCoWorkers.length / itemsPerPage) || 1;
@@ -336,14 +413,13 @@ const CoWorkers = () => {
             <span>Add Co-Worker</span>
           </button>
         </div>
-
       </div>
 
       {/* Stats */}
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
         <QuickStat icon="pi pi-users" label="Total" value={coWorkers.length} color="slate" />
         <QuickStat icon="pi pi-check-circle" label="Active" value={activeCount} color="red" />
-        <QuickStat icon="pi pi-envelope" label="Pending" value={pendingCount} color="slate" />
+        <QuickStat icon="pi pi-envelope" label="Pending Invite" value={pendingCount} color="slate" />
       </div>
 
       {/* Search & Filters */}
@@ -368,25 +444,207 @@ const CoWorkers = () => {
             <option value={50}>50/page</option>
           </select>
         </div>
-        {(searchTerm || statusFilter !== 'all') && (
-          <p className="mt-3 text-sm text-slate-500">
-            Found <span className="font-semibold text-slate-700">{filteredCoWorkers.length}</span> co-workers
-          </p>
-        )}
       </div>
 
-      {/* Co-Workers Grid */}
+      {/* Co-Workers Grid/Cards - Responsive */}
       {filteredCoWorkers.length > 0 ? (
         <>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {/* Desktop Table View */}
+          <div className={`${isMobile ? 'hidden' : 'block'} bg-white rounded-2xl shadow-lg border border-slate-200/50 overflow-hidden`}>
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-slate-50 border-b border-slate-200">
+                  <tr>
+                    <th className="text-left py-3 px-4 text-xs font-semibold text-slate-500 uppercase">User</th>
+                    <th className="text-left py-3 px-4 text-xs font-semibold text-slate-500 uppercase">Email</th>
+                    <th className="text-left py-3 px-4 text-xs font-semibold text-slate-500 uppercase">Organizations</th>
+                    <th className="text-left py-3 px-4 text-xs font-semibold text-slate-500 uppercase">Status</th>
+                    <th className="text-left py-3 px-4 text-xs font-semibold text-slate-500 uppercase">Last Login</th>
+                    <th className="text-center py-3 px-4 text-xs font-semibold text-slate-500 uppercase">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {paginatedCoWorkers.map((coWorker) => (
+                    <tr key={coWorker._id} className="hover:bg-slate-50 transition-colors">
+                      <td className="py-3 px-4">
+                        <div className="flex items-center space-x-3">
+                          <div className="w-8 h-8 bg-gradient-to-br from-slate-700 to-slate-800 rounded-lg flex items-center justify-center">
+                            <span className="text-white font-bold text-xs">
+                              {(coWorker.firstName?.charAt(0) || '')}{(coWorker.lastName?.charAt(0) || '')}
+                            </span>
+                          </div>
+                          <span className="font-medium text-slate-800 text-sm">{coWorker.firstName} {coWorker.lastName}</span>
+                        </div>
+                      </td>
+                      <td className="py-3 px-4 text-sm text-slate-600">{coWorker.email}</td>
+                      <td className="py-3 px-4 text-sm text-slate-600">
+                        {coWorker.permissions?.slice(0, 2).map(p => p.organizationName).join(', ')}
+                        {coWorker.permissions?.length > 2 && ` +${coWorker.permissions.length - 2}`}
+                      </td>
+                      <td className="py-3 px-4">
+                        <span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${coWorker.isActive ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                          {coWorker.isActive ? 'Active' : 'Inactive'}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-sm text-slate-500">
+                        {coWorker.lastLogin ? new Date(coWorker.lastLogin).toLocaleDateString() : 'Never'}
+                      </td>
+                      <td className="py-3 px-4">
+                        <div className="flex items-center justify-center space-x-2">
+                          {/* Activate/Deactivate Toggle Button */}
+                          <button
+                            onClick={() => handleToggleStatus(coWorker)}
+                            disabled={actionLoading.activate === coWorker._id || actionLoading.deactivate === coWorker._id}
+                            className={`p-2 rounded-lg transition-colors ${coWorker.isActive
+                              ? 'bg-red-50 text-red-600 hover:bg-red-100'
+                              : 'bg-green-50 text-green-600 hover:bg-green-100'
+                              } disabled:opacity-50`}
+                            title={coWorker.isActive ? 'Deactivate' : 'Activate'}
+                          >
+                            {actionLoading.activate === coWorker._id || actionLoading.deactivate === coWorker._id ? (
+                              <i className="pi pi-spinner pi-spin text-sm"></i>
+                            ) : (
+                              <i className={`pi ${coWorker.isActive ? 'pi-ban' : 'pi-check-circle'} text-sm`}></i>
+                            )}
+                          </button>
+
+                          {/* Edit Button - Only for active users */}
+                          {coWorker.isActive && (
+                            <button
+                              onClick={() => handleEdit(coWorker)}
+                              className="p-2 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                              title="Edit"
+                            >
+                              <i className="pi pi-pencil text-sm"></i>
+                            </button>
+                          )}
+
+                          {/* Resend Invite - Only for active users who never logged in */}
+                          {coWorker.isActive && !coWorker.lastLogin && (
+                            <button
+                              onClick={() => handleResendInvite(coWorker._id)}
+                              disabled={actionLoading.resend === coWorker._id}
+                              className="p-2 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
+                              title="Resend Invite"
+                            >
+                              {actionLoading.resend === coWorker._id ? (
+                                <i className="pi pi-spinner pi-spin text-sm"></i>
+                              ) : (
+                                <i className="pi pi-envelope text-sm"></i>
+                              )}
+                            </button>
+                          )}
+
+                          {/* Delete Button */}
+                          <button
+                            onClick={() => { setSelectedCoWorker(coWorker); setShowDeleteModal(true); }}
+                            className="p-2 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                            title="Delete"
+                          >
+                            <i className="pi pi-trash text-sm"></i>
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Mobile Card View */}
+          <div className={`${isMobile ? 'block' : 'hidden'} space-y-4`}>
             {paginatedCoWorkers.map((coWorker) => (
-              <CoWorkerCard
-                key={coWorker._id}
-                coWorker={coWorker}
-                onEdit={() => handleEdit(coWorker)}
-                onResend={() => handleResendInvite(coWorker._id)}
-                onDelete={() => { setSelectedCoWorker(coWorker); setShowDeleteModal(true); }}
-              />
+              <div key={coWorker._id} className="bg-white rounded-2xl shadow-lg border border-slate-200/50 p-4">
+                <div className="flex items-start justify-between mb-3">
+                  <div className="flex items-center space-x-3">
+                    <div className="w-10 h-10 bg-gradient-to-br from-slate-700 to-slate-800 rounded-xl flex items-center justify-center">
+                      <span className="text-white font-bold text-sm">
+                        {(coWorker.firstName?.charAt(0) || '')}{(coWorker.lastName?.charAt(0) || '')}
+                      </span>
+                    </div>
+                    <div>
+                      <h3 className="font-semibold text-slate-800">{coWorker.firstName} {coWorker.lastName}</h3>
+                      <p className="text-xs text-slate-500">{coWorker.email}</p>
+                    </div>
+                  </div>
+                  <span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${coWorker.isActive ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                    {coWorker.isActive ? 'Active' : 'Inactive'}
+                  </span>
+                </div>
+
+                <div className="space-y-2 mb-3">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-slate-500">Organizations:</span>
+                    <span className="text-slate-700 text-right">
+                      {coWorker.permissions?.slice(0, 2).map(p => p.organizationName).join(', ')}
+                      {coWorker.permissions?.length > 2 && ` +${coWorker.permissions.length - 2}`}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-slate-500">Last Login:</span>
+                    <span className="text-slate-700">{coWorker.lastLogin ? new Date(coWorker.lastLogin).toLocaleDateString() : 'Never'}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-slate-500">Permissions:</span>
+                    <span className="text-slate-700">{coWorker.permissions?.length || 0} org(s)</span>
+                  </div>
+                </div>
+
+                <div className="flex gap-2 pt-3 border-t border-slate-100">
+                  {/* Activate/Deactivate Button */}
+                  <button
+                    onClick={() => handleToggleStatus(coWorker)}
+                    disabled={actionLoading.activate === coWorker._id || actionLoading.deactivate === coWorker._id}
+                    className={`flex-1 py-2 rounded-lg text-xs font-medium transition-colors flex items-center justify-center space-x-1 ${coWorker.isActive
+                      ? 'bg-red-50 text-red-600 hover:bg-red-100'
+                      : 'bg-green-50 text-green-600 hover:bg-green-100'
+                      } disabled:opacity-50`}
+                  >
+                    {actionLoading.activate === coWorker._id || actionLoading.deactivate === coWorker._id ? (
+                      <i className="pi pi-spinner pi-spin text-xs"></i>
+                    ) : (
+                      <i className={`pi ${coWorker.isActive ? 'pi-ban' : 'pi-check-circle'} text-xs`}></i>
+                    )}
+                    <span>{coWorker.isActive ? 'Deactivate' : 'Activate'}</span>
+                  </button>
+
+                  {/* Edit Button - Only for active users */}
+                  {coWorker.isActive && (
+                    <button
+                      onClick={() => handleEdit(coWorker)}
+                      className="flex-1 py-2 bg-slate-100 text-slate-700 rounded-lg text-xs font-medium hover:bg-red-50 hover:text-red-600 transition-colors flex items-center justify-center space-x-1"
+                    >
+                      <i className="pi pi-pencil text-xs"></i>
+                      <span>Edit</span>
+                    </button>
+                  )}
+
+                  {/* Resend Invite - Only for active users who never logged in */}
+                  {coWorker.isActive && !coWorker.lastLogin && (
+                    <button
+                      onClick={() => handleResendInvite(coWorker._id)}
+                      disabled={actionLoading.resend === coWorker._id}
+                      className="flex-1 py-2 bg-slate-100 text-slate-700 rounded-lg text-xs font-medium hover:bg-red-50 hover:text-red-600 transition-colors disabled:opacity-50 flex items-center justify-center space-x-1"
+                    >
+                      {actionLoading.resend === coWorker._id ? (
+                        <i className="pi pi-spinner pi-spin text-xs"></i>
+                      ) : (
+                        <i className="pi pi-envelope text-xs"></i>
+                      )}
+                      <span>Resend</span>
+                    </button>
+                  )}
+
+                  {/* Delete Button */}
+                  <button
+                    onClick={() => { setSelectedCoWorker(coWorker); setShowDeleteModal(true); }}
+                    className="py-2 px-3 bg-slate-100 text-slate-600 rounded-lg text-xs font-medium hover:bg-red-50 hover:text-red-600 transition-colors"
+                  >
+                    <i className="pi pi-trash"></i>
+                  </button>
+                </div>
+              </div>
             ))}
           </div>
 
@@ -422,7 +680,6 @@ const CoWorkers = () => {
             </div>
           )}
         </>
-
       ) : (
         <div className="text-center py-16 bg-white rounded-2xl shadow-lg border border-slate-200/50">
           <i className="pi pi-users text-5xl text-slate-300 mb-4 block"></i>
@@ -433,23 +690,7 @@ const CoWorkers = () => {
         </div>
       )}
 
-      {/* Notification Toast */}
-      <AnimatePresence>
-        {notification.show && (
-          <motion.div initial={{ opacity: 0, y: -50 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -50 }}
-            className="fixed top-20 right-4 z-[100] max-w-md">
-            <div className={`rounded-xl shadow-lg p-4 flex items-start border-l-4 ${notification.type === 'success' ? 'bg-green-50 border-green-500' : 'bg-red-50 border-red-500'}`}>
-              <i className={`pi ${notification.type === 'success' ? 'pi-check-circle text-green-500' : 'pi-exclamation-triangle text-red-500'} text-xl mr-3`}></i>
-              <p className={`text-sm font-medium flex-1 ${notification.type === 'success' ? 'text-green-800' : 'text-red-800'}`}>{notification.message}</p>
-              <button onClick={() => setNotification({ show: false })} className="text-slate-400 hover:text-slate-600">
-                <i className="pi pi-times"></i>
-              </button>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Add/Edit Modal */}
+      {/* ==================== ADD/EDIT MODAL ==================== */}
       <AnimatePresence>
         {showModal && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
@@ -485,20 +726,6 @@ const CoWorkers = () => {
                       onChange={(e) => setFormData(prev => ({ ...prev, phoneNumber: e.target.value }))} />
                   </div>
 
-                  {/* Status Toggle (Edit only) */}
-                  {selectedCoWorker && (
-                    <div className="flex items-center justify-between p-3 bg-slate-50 rounded-xl">
-                      <div>
-                        <p className="text-sm font-medium text-slate-700">Account Status</p>
-                        <p className="text-xs text-slate-500">{formData.isActive ? 'Active - can login' : 'Inactive - cannot login'}</p>
-                      </div>
-                      <button type="button" onClick={() => setFormData(prev => ({ ...prev, isActive: !prev.isActive }))}
-                        className={`relative w-12 h-6 rounded-full transition-colors ${formData.isActive ? 'bg-red-600' : 'bg-slate-300'}`}>
-                        <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${formData.isActive ? 'left-6' : 'left-0.5'}`}></span>
-                      </button>
-                    </div>
-                  )}
-
                   {/* Organization Permissions */}
                   <div>
                     <label className="block text-sm font-semibold text-slate-700 mb-3">
@@ -512,12 +739,12 @@ const CoWorkers = () => {
                       <div className="space-y-3">
                         {organizations.map(org => {
                           const orgPerms = formData.permissions.find(p => p.organizationId === org._id) || {};
-                          const activeCount = Object.values(orgPerms).filter(v => v === true).length - 2;
+                          const activeCount = Object.values(orgPerms).filter(v => v === true).length;
                           return (
                             <details key={org._id} className="bg-slate-50 rounded-xl border border-slate-200 group">
                               <summary className="flex items-center justify-between p-3 cursor-pointer hover:bg-slate-100 rounded-xl">
                                 <div className="flex items-center space-x-2">
-                                  <i className={`pi pi-chevron-right text-xs text-slate-400 transition-transform group-open:rotate-90`}></i>
+                                  <i className="pi pi-chevron-right text-xs text-slate-400 transition-transform group-open:rotate-90"></i>
                                   <span className="text-sm font-medium text-slate-700">{org.name}</span>
                                   <span className="text-xs text-slate-400 capitalize">({org.type})</span>
                                 </div>
@@ -537,8 +764,7 @@ const CoWorkers = () => {
                                   { key: 'canMarkAttendance', label: 'Attendance', icon: 'pi pi-calendar' },
                                 ].map(perm => (
                                   <label key={perm.key}
-                                    className={`flex items-center space-x-2 p-2 rounded-lg cursor-pointer transition-colors ${orgPerms[perm.key] ? 'bg-red-50 border border-red-200' : 'hover:bg-white'
-                                      }`}>
+                                    className={`flex items-center space-x-2 p-2 rounded-lg cursor-pointer transition-colors ${orgPerms[perm.key] ? 'bg-red-50 border border-red-200' : 'hover:bg-white'}`}>
                                     <input type="checkbox" checked={orgPerms[perm.key] || false}
                                       onChange={() => handlePermissionChange(org._id, perm.key)}
                                       className="w-4 h-4 text-red-600 rounded focus:ring-red-500" />
@@ -574,7 +800,7 @@ const CoWorkers = () => {
         )}
       </AnimatePresence>
 
-      {/* Delete Confirmation */}
+      {/* ==================== DELETE CONFIRMATION MODAL ==================== */}
       <AnimatePresence>
         {showDeleteModal && selectedCoWorker && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
@@ -595,26 +821,36 @@ const CoWorkers = () => {
               </div>
               <div className="space-y-3 mt-6">
                 <button onClick={() => handleDelete(false)}
-                  className="w-full text-left p-4 border border-amber-200 rounded-xl hover:bg-amber-50 transition-colors">
+                  disabled={actionLoading.deactivate === selectedCoWorker._id}
+                  className="w-full text-left p-4 border border-amber-200 rounded-xl hover:bg-amber-50 transition-colors disabled:opacity-50">
                   <div className="flex items-center space-x-3">
                     <div className="w-9 h-9 bg-amber-100 rounded-full flex items-center justify-center">
-                      <i className="pi pi-ban text-amber-600"></i>
+                      {actionLoading.deactivate === selectedCoWorker._id ? (
+                        <i className="pi pi-spinner pi-spin text-amber-600"></i>
+                      ) : (
+                        <i className="pi pi-ban text-amber-600"></i>
+                      )}
                     </div>
                     <div>
-                      <p className="font-medium text-slate-800 text-sm">Deactivate</p>
-                      <p className="text-xs text-slate-500">Cannot login, data preserved</p>
+                      <p className="font-medium text-slate-800 text-sm">Deactivate Account</p>
+                      <p className="text-xs text-slate-500">User cannot login, data preserved</p>
                     </div>
                   </div>
                 </button>
                 <button onClick={() => handleDelete(true)}
-                  className="w-full text-left p-4 border border-red-200 rounded-xl hover:bg-red-50 transition-colors">
+                  disabled={actionLoading.delete === selectedCoWorker._id}
+                  className="w-full text-left p-4 border border-red-200 rounded-xl hover:bg-red-50 transition-colors disabled:opacity-50">
                   <div className="flex items-center space-x-3">
                     <div className="w-9 h-9 bg-red-100 rounded-full flex items-center justify-center">
-                      <i className="pi pi-trash text-red-600"></i>
+                      {actionLoading.delete === selectedCoWorker._id ? (
+                        <i className="pi pi-spinner pi-spin text-red-600"></i>
+                      ) : (
+                        <i className="pi pi-trash text-red-600"></i>
+                      )}
                     </div>
                     <div>
                       <p className="font-medium text-slate-800 text-sm">Permanently Delete</p>
-                      <p className="text-xs text-slate-500">Cannot be undone</p>
+                      <p className="text-xs text-slate-500">All data removed. Cannot be undone.</p>
                     </div>
                   </div>
                 </button>
@@ -628,24 +864,20 @@ const CoWorkers = () => {
         )}
       </AnimatePresence>
 
-      {/* Bulk Import Modal */}
+      {/* ==================== BULK IMPORT MODAL ==================== */}
       {showBulkModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-hidden animate-scale-in">
-            {/* Header */}
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-hidden">
             <div className="flex items-center justify-between p-5 border-b border-slate-200 bg-slate-50">
               <h3 className="text-xl font-bold text-slate-800">Bulk Import Co-Workers</h3>
-              <button onClick={() => { setShowBulkModal(false); setBulkFile(null); setBulkPreview([]); setBulkResults(null); }}
-                className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center hover:bg-slate-300">
+              <button onClick={resetBulkModal} className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center hover:bg-slate-300">
                 <i className="pi pi-times"></i>
               </button>
             </div>
 
-            {/* Body */}
             <div className="p-5 space-y-4 overflow-y-auto max-h-[calc(90vh-140px)]">
               {!bulkResults ? (
                 <>
-                  {/* Instructions */}
                   <div className="bg-slate-50 border border-slate-200 rounded-xl p-4">
                     <h4 className="font-semibold text-slate-800 mb-2">📋 Instructions</h4>
                     <ol className="text-sm text-slate-600 space-y-1 list-decimal list-inside">
@@ -657,7 +889,6 @@ const CoWorkers = () => {
                     </ol>
                   </div>
 
-                  {/* Download Template */}
                   <button
                     onClick={downloadCoWorkerTemplate}
                     className="w-full py-3 bg-gradient-to-r from-red-600 to-red-500 text-white rounded-xl font-medium hover:from-red-700 hover:to-red-600 transition-all flex items-center justify-center space-x-2"
@@ -666,7 +897,6 @@ const CoWorkers = () => {
                     <span>Download Template (Excel)</span>
                   </button>
 
-                  {/* File Upload */}
                   <div className="border-2 border-dashed border-slate-300 rounded-xl p-6 text-center hover:border-red-300 transition-colors">
                     <input
                       type="file"
@@ -684,7 +914,6 @@ const CoWorkers = () => {
                     </label>
                   </div>
 
-                  {/* Preview */}
                   {bulkPreview.length > 0 && (
                     <div>
                       <h4 className="font-semibold text-slate-800 mb-2">Preview (First 5 Rows)</h4>
@@ -712,7 +941,6 @@ const CoWorkers = () => {
                   )}
                 </>
               ) : (
-                /* Results */
                 <div className="space-y-3">
                   <h4 className="font-semibold text-slate-800">Import Results</h4>
                   <div className="bg-green-50 border border-green-200 rounded-xl p-4">
@@ -733,10 +961,9 @@ const CoWorkers = () => {
               )}
             </div>
 
-            {/* Footer */}
             <div className="flex justify-end gap-3 p-5 border-t border-slate-200 bg-slate-50">
               <button
-                onClick={() => { setShowBulkModal(false); setBulkFile(null); setBulkPreview([]); setBulkResults(null); }}
+                onClick={resetBulkModal}
                 className="px-5 py-2.5 border border-slate-300 rounded-xl text-slate-700 font-medium"
               >
                 {bulkResults ? 'Close' : 'Cancel'}
@@ -771,61 +998,6 @@ const QuickStat = ({ icon, label, value, color }) => (
     <p className="text-xs text-slate-500">{label}</p>
   </div>
 );
-
-const CoWorkerCard = ({ coWorker, onEdit, onResend, onDelete }) => {
-  const permCount = coWorker.permissions?.length || 0;
-  const orgNames = coWorker.permissions?.map(p => p.organizationName).slice(0, 2).join(', ') || 'No orgs';
-  const hasMore = (coWorker.permissions?.length || 0) > 2;
-
-  return (
-    <div className="bg-white rounded-2xl shadow-lg border border-slate-200/50 p-5 hover:shadow-xl hover:border-red-200 transition-all">
-      <div className="flex items-start justify-between mb-3">
-        <div className="flex items-center space-x-3">
-          <div className="w-10 h-10 bg-gradient-to-br from-slate-700 to-slate-800 rounded-xl flex items-center justify-center">
-            <span className="text-white font-bold text-sm">
-              {(coWorker.firstName?.charAt(0) || '')}{(coWorker.lastName?.charAt(0) || '')}
-            </span>
-          </div>
-          <div>
-            <h3 className="font-semibold text-slate-800 text-sm">{coWorker.firstName} {coWorker.lastName}</h3>
-            <p className="text-xs text-slate-500">{coWorker.email}</p>
-          </div>
-        </div>
-        <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${coWorker.isActive ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'
-          }`}>
-          {coWorker.isActive ? 'Active' : 'Inactive'}
-        </span>
-      </div>
-
-      <div className="mb-3">
-        <p className="text-xs text-slate-500 mb-1">Organizations:</p>
-        <p className="text-xs text-slate-700">{orgNames}{hasMore ? ` +${coWorker.permissions.length - 2} more` : ''}</p>
-      </div>
-
-      <div className="flex items-center justify-between text-xs text-slate-400 mb-3">
-        <span>{permCount} org{permCount !== 1 ? 's' : ''} assigned</span>
-        <span>{coWorker.lastLogin ? `Last: ${new Date(coWorker.lastLogin).toLocaleDateString()}` : 'Never logged in'}</span>
-      </div>
-
-      <div className="flex gap-2 pt-3 border-t border-slate-100">
-        <button onClick={onEdit}
-          className="flex-1 py-2 bg-slate-100 text-slate-700 rounded-lg text-xs font-medium hover:bg-red-50 hover:text-red-600 transition-colors">
-          <i className="pi pi-pencil mr-1"></i> Edit
-        </button>
-        {!coWorker.lastLogin && (
-          <button onClick={onResend}
-            className="flex-1 py-2 bg-slate-100 text-slate-700 rounded-lg text-xs font-medium hover:bg-red-50 hover:text-red-600 transition-colors">
-            <i className="pi pi-envelope mr-1"></i> Resend
-          </button>
-        )}
-        <button onClick={onDelete}
-          className="py-2 px-3 bg-slate-100 text-slate-600 rounded-lg text-xs font-medium hover:bg-red-50 hover:text-red-600 transition-colors">
-          <i className="pi pi-trash"></i>
-        </button>
-      </div>
-    </div>
-  );
-};
 
 const InputField = ({ label, name, value, onChange, type = 'text', disabled }) => (
   <div>

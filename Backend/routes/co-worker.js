@@ -210,7 +210,7 @@ router.post('/',
                 password: await bcrypt.hash(tempPassword, 10),
                 role: 'co_worker',
                 companyId: targetCompanyId,
-                createdBy: req.user._id,
+                createdBy: req.user.id,
                 permissions: validPermissions,
                 metadata: {
                     registrationCompleted: true,
@@ -256,6 +256,135 @@ router.post('/',
     }
 );
 
+
+/**
+ * @desc    Bulk create co-workers
+ * @route   POST /api/co-workers/bulk
+ * @access  Private (Admin)
+ */
+router.post('/bulk',
+    authMiddleware,
+    roleMiddleware(['admin', 'super_admin']),
+    async (req, res) => {
+        try {
+            const { staffList } = req.body;
+
+            console.log('📦 [BULK] Received staff list:', staffList?.length);
+
+            if (!staffList || !Array.isArray(staffList) || staffList.length === 0) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'Staff list is required'
+                });
+            }
+
+            const results = {
+                success: [],
+                failed: []
+            };
+
+            for (const staff of staffList) {
+                try {
+                    console.log(`🔄 Processing: ${staff.email}`);
+
+                    // Check if user exists
+                    const existingUser = await User.findOne({ email: staff.email.toLowerCase() });
+                    if (existingUser) {
+                        results.failed.push({
+                            email: staff.email,
+                            reason: 'User with this email already exists'
+                        });
+                        continue;
+                    }
+
+                    // Find organization by name
+                    const organization = await School.findOne({
+                        name: { $regex: new RegExp(`^${staff.organizationName}$`, 'i') },
+                        companyId: req.user.companyId
+                    });
+
+                    if (!organization) {
+                        results.failed.push({
+                            email: staff.email,
+                            reason: `Organization "${staff.organizationName}" not found in your company`
+                        });
+                        continue;
+                    }
+
+                    // Create permissions
+                    const permissions = [{
+                        organizationId: organization._id,
+                        organizationName: organization.name,
+                        canManageStudents: staff.canManageStudents || false,
+                        canGenerateCards: staff.canGenerateCards || false,
+                        canManageTemplates: staff.canManageTemplates || false,
+                        canUploadCSV: staff.canUploadCSV || false,
+                        canUploadPhotos: staff.canUploadPhotos || false,
+                        canViewAnalytics: staff.canViewAnalytics || false,
+                        canViewAuditLogs: staff.canViewAuditLogs || false,
+                        canMarkAttendance: staff.canMarkAttendance || false
+                    }];
+
+                    // Generate username and password
+                    const baseUsername = `${staff.firstName.toLowerCase()}.${staff.lastName.toLowerCase()}`;
+                    const username = await generateUniqueUsername(baseUsername);
+                    const tempPassword = generateTemporaryPassword();
+
+                    // Create co-worker
+                    const coWorker = await User.create({
+                        firstName: staff.firstName,
+                        lastName: staff.lastName,
+                        username,
+                        email: staff.email.toLowerCase(),
+                        phoneNumber: staff.phoneNumber,
+                        password: await bcrypt.hash(tempPassword, 10),
+                        role: 'co_worker',
+                        companyId: req.user.companyId,
+                        createdBy: req.user._id,
+                        permissions: permissions,
+                        metadata: {
+                            registrationCompleted: true,
+                            needsPasswordChange: true
+                        },
+                        isEmailVerified: false
+                    });
+
+                    // Send invitation email
+                    const company = await Company.findById(req.user.companyId);
+                    await sendCoWorkerInvite(coWorker, company, req.user, tempPassword);
+
+                    results.success.push({
+                        id: coWorker._id,
+                        name: `${coWorker.firstName} ${coWorker.lastName}`,
+                        email: coWorker.email
+                    });
+
+                    console.log(`✅ Created: ${coWorker.email}`);
+
+                } catch (error) {
+                    console.error(`❌ Failed for ${staff.email}:`, error.message);
+                    results.failed.push({
+                        email: staff.email,
+                        reason: error.message
+                    });
+                }
+            }
+
+            console.log(`📊 Bulk import complete: ${results.success.length} success, ${results.failed.length} failed`);
+
+            res.json({
+                success: true,
+                message: `Bulk import completed: ${results.success.length} created, ${results.failed.length} failed`,
+                results
+            });
+
+        } catch (error) {
+            console.error('Bulk create error:', error);
+            res.status(500).json({ success: false, error: error.message });
+        }
+    }
+);
+
 /**
  * @desc    Update co-worker
  * @route   PUT /api/co-workers/:id
@@ -288,6 +417,13 @@ router.put('/:id',
                 });
             }
 
+            // ✅ FIX: Get the company for this co-worker
+            const company = await Company.findById(coWorker.companyId);
+
+            if (!company) {
+                console.warn('⚠️ Company not found for co-worker:', coWorker.companyId);
+            }
+
             const changes = {};
 
             if (firstName) {
@@ -308,14 +444,31 @@ router.put('/:id',
             }
 
             // Update permissions (array format)
+            let permissionsChanges = null;
             if (permissions && Array.isArray(permissions)) {
                 const oldPermissions = [...coWorker.permissions];
                 coWorker.permissions = permissions;
-                changes.permissions = { from: oldPermissions, to: permissions };
-            }
 
+                // ✅ Pass both old and new permissions
+                const permissionsChanges = {
+                    from: oldPermissions,
+                    to: permissions
+                };
+                changes.permissions = permissionsChanges;
+
+                // Send email with the changes
+                if (company) {
+                    await sendPermissionsUpdatedEmail(coWorker, company, req.user, permissionsChanges);
+                }
+            }
             await coWorker.save();
-            await sendPermissionsUpdatedEmail(coWorker, company, req.user, permissionsChanges);
+
+            // ✅ FIX: Only send email if company exists
+            if (company && permissionsChanges) {
+                await sendPermissionsUpdatedEmail(coWorker, company, req.user, permissionsChanges);
+            } else if (permissionsChanges) {
+                console.log('📧 Email not sent - company not found for co-worker');
+            }
 
             await AuditLog.create({
                 action: 'UPDATE_STAFF',
@@ -331,7 +484,10 @@ router.put('/:id',
             });
 
             if (isActive === false) {
-                await sendAccountDeactivatedEmail(coWorker, companyName, req.user);
+                // ✅ FIX: Only send email if company exists
+                if (company) {
+                    await sendAccountDeactivatedEmail(coWorker, company.name, req.user);
+                }
             }
 
             res.json({
@@ -386,10 +542,18 @@ router.patch('/:id/permissions',
                 });
             }
 
+            // ✅ FIX: Get the company for this co-worker
+            const company = await Company.findById(coWorker.companyId);
+
             const oldPermissions = [...coWorker.permissions];
             coWorker.permissions = permissions;
             await coWorker.save();
-            await sendPermissionsUpdatedEmail(coWorker, company, req.user, permissionsChanges);
+
+            // ✅ FIX: Only send email if company exists
+            if (company) {
+                const permissionsChanges = { from: oldPermissions, to: permissions };
+                await sendPermissionsUpdatedEmail(coWorker, company, req.user, permissionsChanges);
+            }
 
             await AuditLog.create({
                 action: 'UPDATE_STAFF_PERMISSIONS',
@@ -418,11 +582,6 @@ router.patch('/:id/permissions',
     }
 );
 
-/**
- * @desc    Delete co-worker
- * @route   DELETE /api/co-workers/:id
- * @access  Private (Admin)
- */
 router.delete('/:id',
     authMiddleware,
     roleMiddleware(['admin', 'super_admin']),
@@ -450,8 +609,10 @@ router.delete('/:id',
                 });
             }
 
+            // ✅ FIX: Get company name from populated coWorker
+            const companyName = coWorker.companyId?.name || 'your company';
+
             if (permanent === 'true') {
-                const companyName = coWorker.companyId.name;
                 const staffEmail = coWorker.email;
                 const staffName = `${coWorker.firstName} ${coWorker.lastName}`;
 
@@ -473,9 +634,8 @@ router.delete('/:id',
                 coWorker.isActive = false;
                 await coWorker.save();
 
-                const companyName = coWorker.companyId.name;
-
                 await sendAccountDeactivatedEmail(coWorker, companyName, req.user);
+
                 await AuditLog.create({
                     action: 'DEACTIVATE_STAFF',
                     userId: req.user._id,
@@ -499,11 +659,6 @@ router.delete('/:id',
     }
 );
 
-/**
- * @desc    Resend invitation
- * @route   POST /api/co-workers/:id/resend-invite
- * @access  Private (Admin)
- */
 router.post('/:id/resend-invite',
     authMiddleware,
     roleMiddleware(['admin', 'super_admin']),
@@ -534,20 +689,9 @@ router.post('/:id/resend-invite',
             coWorker.metadata.needsPasswordChange = true;
             await coWorker.save();
 
-            await sendEmail({
-                to: coWorker.email,
-                subject: `Reminder: You've been added to ${coWorker.companyId.name}`,
-                template: 'staff-invite',
-                context: {
-                    firstName: coWorker.firstName,
-                    companyName: coWorker.companyId.name,
-                    adminName: `${req.user.firstName} ${req.user.lastName}`,
-                    email: coWorker.email,
-                    tempPassword: tempPassword,
-                    loginUrl: `${process.env.FRONTEND_URL}/login`,
-                    changePasswordUrl: `${process.env.FRONTEND_URL}/change-password`
-                }
-            });
+            // ✅ FIX: Use sendCoWorkerInvite instead of sendEmail
+            const company = coWorker.companyId;
+            await sendCoWorkerInvite(coWorker, company, req.user, tempPassword);
 
             await AuditLog.create({
                 action: 'RESEND_STAFF_INVITE',

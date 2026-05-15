@@ -220,9 +220,10 @@ auditLogSchema.pre('save', async function (next) {
     next();
 });
 // models/AuditLog.js - ADD POST-SAVE HOOK
+// ✅ REPLACE the entire post-save hook with this:
 auditLogSchema.post('save', async function (doc) {
     try {
-        // Populate required fields for real-time emission
+        // Populate user info
         const populatedDoc = await doc.populate('userId', 'firstName lastName email role');
 
         const logData = {
@@ -248,33 +249,26 @@ auditLogSchema.post('save', async function (doc) {
             createdAt: doc.createdAt
         };
 
-        // Emit to socket.io if available
-        const io = require('../server').io;
-        if (io) {
-            // Emit to specific rooms based on hierarchy
+        // ✅ Use global.io instead of requiring server
+        if (global.io) {
+            // Emit to specific rooms
             if (doc.userId) {
-                io.to(`user_${doc.userId}`).emit('audit:new', logData);
+                global.io.to(`user_${doc.userId}`).emit('audit:new', logData);
             }
             if (doc.companyId) {
-                io.to(`company_${doc.companyId}`).emit('audit:new', logData);
+                global.io.to(`company_${doc.companyId}`).emit('audit:new', logData);
             }
-
             if (doc.schoolId) {
-                io.to(`school_${doc.schoolId}`).emit('audit:new', logData);
+                global.io.to(`school_${doc.schoolId}`).emit('audit:new', logData);
             }
-
-            // Critical events to super admins
             if (doc.importance === 'critical') {
-                io.to('role_super_admin').emit('audit:critical', logData);
+                global.io.to('role_super_admin').emit('audit:critical', logData);
             }
-
-            // Broadcast to all connected clients with appropriate permissions
-            io.emit('audit:global', {
-                action: doc.action,
-                importance: doc.importance,
-                schoolId: doc.schoolId
-            });
         }
+
+        // Also log to console for debugging
+        console.log(`📝 AUDIT: ${doc.action} | User: ${doc.userInfo?.email} | Status: ${doc.status}`);
+
     } catch (error) {
         console.error('Failed to emit real-time audit log:', error);
     }

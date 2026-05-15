@@ -56,6 +56,22 @@ const verifyConnection = async () => {
 
 verifyConnection();
 
+// Register Handlebars helpers
+handlebars.registerHelper('eq', function (a, b) { return a === b; });
+handlebars.registerHelper('gt', function (a, b) { return a > b; });
+handlebars.registerHelper('includes', function (array, value) { return array && array.includes(value); });
+handlebars.registerHelper('formatDate', function (date) { return new Date(date).toLocaleDateString(); });
+handlebars.registerHelper('formatDateTime', function (date) { return new Date(date).toLocaleString(); });
+handlebars.registerHelper('default', function (value, fallback) { return value || fallback; });
+
+// ✅ ADD THIS MISSING HELPER
+handlebars.registerHelper('split', function (str, separator) {
+    if (!str) return [];
+    return str.split(separator);
+});
+
+
+
 /**
  * Compile email template
  */
@@ -212,8 +228,13 @@ const sendWelcomeEmail = async (user, company) => {
 /**
  * Send co-worker invitation email
  */
-const sendCoWorkerInvite = async (coWorker, company, adminName, tempPassword) => {
+const sendCoWorkerInvite = async (coWorker, company, adminUser, tempPassword) => {
     const orgNames = coWorker.permissions?.map(p => p.organizationName).join(', ') || 'No organizations assigned';
+
+    // ✅ FIX: Extract admin name as string, not object
+    const adminNameString = typeof adminUser === 'object'
+        ? `${adminUser.firstName || adminUser.name || ''} ${adminUser.lastName || ''}`.trim()
+        : adminUser;
 
     return sendEmail({
         to: coWorker.email,
@@ -222,7 +243,7 @@ const sendCoWorkerInvite = async (coWorker, company, adminName, tempPassword) =>
         context: {
             firstName: coWorker.firstName,
             companyName: company.name,
-            adminName: adminName,
+            adminName: adminNameString,  // ✅ Now this is a string, not an object
             email: coWorker.email,
             tempPassword: tempPassword,
             organizations: orgNames,
@@ -287,7 +308,12 @@ const sendPasswordResetEmail = async (user, resetToken) => {
 /**
  * Send account deactivated notification
  */
-const sendAccountDeactivatedEmail = async (user, companyName, adminName) => {
+const sendAccountDeactivatedEmail = async (user, companyName, adminUser) => {
+    // ✅ FIX: Extract admin name as string
+    const adminNameString = typeof adminUser === 'object'
+        ? `${adminUser.firstName || adminUser.name || ''} ${adminUser.lastName || ''}`.trim()
+        : adminUser;
+
     return sendEmail({
         to: user.email,
         subject: `Your CARD-AGENT Account Has Been Deactivated`,
@@ -295,7 +321,7 @@ const sendAccountDeactivatedEmail = async (user, companyName, adminName) => {
         context: {
             firstName: user.firstName,
             companyName: companyName,
-            adminName: adminName,
+            adminName: adminNameString,  // ✅ Now this is a string
             supportEmail: process.env.SUPPORT_EMAIL || 'support@cardagent.rw'
         }
     });
@@ -305,6 +331,11 @@ const sendAccountDeactivatedEmail = async (user, companyName, adminName) => {
  * Send account permanently deleted notification
  */
 const sendAccountDeletedPermanentEmail = async (user, companyName, adminUser) => {
+    // ✅ FIX: Extract admin name as string
+    const adminNameString = typeof adminUser === 'object'
+        ? `${adminUser.firstName || adminUser.name || ''} ${adminUser.lastName || ''}`.trim()
+        : adminUser;
+
     return sendEmail({
         to: user.email,
         subject: `Your CARD-AGENT Account Has Been Permanently Deleted`,
@@ -313,7 +344,7 @@ const sendAccountDeletedPermanentEmail = async (user, companyName, adminUser) =>
             firstName: user.firstName,
             email: user.email,
             companyName: companyName,
-            adminName: `${adminUser.firstName} ${adminUser.lastName}`,
+            adminName: adminNameString,  // ✅ Now this is a string
             deletionDate: new Date().toLocaleDateString('en-US', {
                 year: 'numeric', month: 'long', day: 'numeric',
                 hour: '2-digit', minute: '2-digit'
@@ -325,12 +356,97 @@ const sendAccountDeletedPermanentEmail = async (user, companyName, adminUser) =>
 
 /**
  * Send permissions updated notification
- * coWorker = co-worker user object
- * company = company object
- * adminUser = admin who updated permissions
- * permissionsData = array of { organizationName, changes: [{name, added, removed, unchanged}] }
  */
 const sendPermissionsUpdatedEmail = async (coWorker, company, adminUser, permissionsData) => {
+    // ✅ FIX: Extract admin name as string
+    const adminNameString = typeof adminUser === 'object'
+        ? `${adminUser.firstName || adminUser.name || ''} ${adminUser.lastName || ''}`.trim()
+        : adminUser;
+
+    // ✅ Format permissions data for the template
+    const formattedPermissions = [];
+
+    // If permissionsData has 'to' property (from update route)
+    let newPermissions = permissionsData;
+    let oldPermissions = [];
+
+    if (permissionsData && permissionsData.to) {
+        newPermissions = permissionsData.to;
+        oldPermissions = permissionsData.from || [];
+    }
+
+    // Group permissions by organization
+    const orgPermissionsMap = new Map();
+
+    // Process new permissions (what the user now has)
+    for (const perm of newPermissions) {
+        const orgId = perm.organizationId?.toString() || perm.organizationId;
+        if (!orgPermissionsMap.has(orgId)) {
+            orgPermissionsMap.set(orgId, {
+                organizationName: perm.organizationName,
+                permissions: new Set(),
+                oldPermissions: new Set()
+            });
+        }
+
+        // Add all permissions the user has
+        const permKeys = [
+            'canManageStudents', 'canGenerateCards', 'canManageTemplates',
+            'canUploadCSV', 'canUploadPhotos', 'canViewAnalytics',
+            'canViewAuditLogs', 'canMarkAttendance'
+        ];
+
+        for (const key of permKeys) {
+            if (perm[key] === true) {
+                orgPermissionsMap.get(orgId).permissions.add(formatPermissionName(key));
+            }
+        }
+    }
+
+    // Process old permissions to show what was removed (if we have old data)
+    for (const perm of oldPermissions) {
+        const orgId = perm.organizationId?.toString() || perm.organizationId;
+        if (orgPermissionsMap.has(orgId)) {
+            const permKeys = [
+                'canManageStudents', 'canGenerateCards', 'canManageTemplates',
+                'canUploadCSV', 'canUploadPhotos', 'canViewAnalytics',
+                'canViewAuditLogs', 'canMarkAttendance'
+            ];
+
+            for (const key of permKeys) {
+                if (perm[key] === true) {
+                    orgPermissionsMap.get(orgId).oldPermissions.add(formatPermissionName(key));
+                }
+            }
+        }
+    }
+
+    // Build the final permissions array for the template
+    for (const [orgId, data] of orgPermissionsMap) {
+        const changes = [];
+        const allPerms = new Set([...data.permissions, ...data.oldPermissions]);
+
+        for (const permName of allPerms) {
+            const hasNow = data.permissions.has(permName);
+            const hadBefore = data.oldPermissions.has(permName);
+
+            if (hasNow && !hadBefore) {
+                changes.push({ name: permName, added: true, removed: false, unchanged: false });
+            } else if (!hasNow && hadBefore) {
+                changes.push({ name: permName, added: false, removed: true, unchanged: false });
+            } else if (hasNow && hadBefore) {
+                changes.push({ name: permName, added: false, removed: false, unchanged: true });
+            }
+        }
+
+        if (changes.length > 0) {
+            formattedPermissions.push({
+                organizationName: data.organizationName,
+                changes: changes
+            });
+        }
+    }
+
     return sendEmail({
         to: coWorker.email,
         subject: `Your CARD-AGENT Permissions Have Been Updated`,
@@ -338,17 +454,31 @@ const sendPermissionsUpdatedEmail = async (coWorker, company, adminUser, permiss
         context: {
             firstName: coWorker.firstName,
             companyName: company.name,
-            adminName: `${adminUser.firstName} ${adminUser.lastName}`,
-            permissions: permissionsData,
+            adminName: adminNameString,
+            permissions: formattedPermissions,
             loginUrl: `${process.env.FRONTEND_URL}/login`
         }
     });
 };
 
+// Helper function to format permission keys into readable names
+function formatPermissionName(key) {
+    const names = {
+        'canManageStudents': 'Manage Students',
+        'canGenerateCards': 'Generate Cards',
+        'canManageTemplates': 'Manage Templates',
+        'canUploadCSV': 'Upload CSV',
+        'canUploadPhotos': 'Upload Photos',
+        'canViewAnalytics': 'View Analytics',
+        'canViewAuditLogs': 'View Audit Logs',
+        'canMarkAttendance': 'Mark Attendance'
+    };
+    return names[key] || key.replace('can', '').replace(/([A-Z])/g, ' $1').trim();
+}
+
 
 /**
  * Send super admin alert for new registration
- * Queries DB to find ALL super admins
  */
 const sendNewRegistrationAlert = async (company, adminUser) => {
     try {
@@ -362,7 +492,9 @@ const sendNewRegistrationAlert = async (company, adminUser) => {
             return { success: false, error: 'No super admin found' };
         }
 
-        // Send to ALL super admins
+        // ✅ FIX: Extract admin name as string
+        const adminNameString = `${adminUser.firstName} ${adminUser.lastName}`;
+
         const results = [];
         for (const superAdmin of superAdmins) {
             const result = await sendEmail({
@@ -372,7 +504,7 @@ const sendNewRegistrationAlert = async (company, adminUser) => {
                 context: {
                     superAdminName: superAdmin.firstName,
                     companyName: company.name,
-                    adminName: `${adminUser.firstName} ${adminUser.lastName}`,
+                    adminName: adminNameString,  // ✅ Now this is a string
                     adminEmail: adminUser.email,
                     companyPhone: company.phone,
                     companyAddress: `${company.address?.district}, ${company.address?.province}`,

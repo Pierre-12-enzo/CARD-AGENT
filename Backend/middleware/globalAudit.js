@@ -1,71 +1,79 @@
 // middleware/globalAudit.js
 const AuditLog = require('../models/AuditLog');
-const socketService = require('../services/socketService');
 
 const globalAudit = (req, res, next) => {
-  // Skip these paths
   const skipPaths = [
+    '/api/health',
     '/health',
     '/favicon.ico',
-    '/public',
-    '/css',
-    '/js',
-    '/images',
-    '/auth/register',
-    '/auth/check-email',
-    '/auth/check-school',
-    '/auth/check-company',
-    '/auth/plans',
-    '/auth/forgot-password',
-    '/auth/reset-password',
-    '/card/batch-progress',
-    '/card/template-dimensions',
-    '/card/student-photo',
-    '/students/photo',
-    '/students/health',
-    '/templates/preview',
+    '/api/students/photo',
+    '/api/templates/preview',
+    '/api/card/batch-progress',
+    '/api/card/template-dimensions',
+    '/api/auth/login',
+    '/api/auth/register',
+    '/api/auth/check-email',
+    '/api/auth/forgot-password',
+    '/api/auth/reset-password'
   ];
 
   if (skipPaths.some(path => req.path.startsWith(path))) {
     return next();
   }
 
-  // Skip if no authenticated user or GET requests (optional - log GETs if you want)
-  if (!req.user) {
-    return next();
-  }
-
-  // Skip GET requests (less noise) - remove this line if you want GET logged
-  if (req.method === 'GET') {
-    return next();
-  }
-
   // Store start time
   req._startTime = Date.now();
 
-  // Capture the original json method
   const originalJson = res.json;
 
   res.json = function (body) {
-    // Restore original
     res.json = originalJson;
 
-    // Log in background - don't block response
     setImmediate(async () => {
       try {
-        const status = res.statusCode >= 400 ? 'failure' : 'success';
-        const isSuccess = body && body.success !== false;
+        // Check if user exists
+        if (!req.user) {
+          return;
+        }
+
+        // Only log mutations (POST, PUT, PATCH, DELETE)
+        const isMutation = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method);
+        /*const isImportantGet = req.method === 'GET' && (
+          req.originalUrl.includes('/api/audit/logs') ||
+          req.originalUrl.includes('/api/company/dashboard') ||
+          req.originalUrl.includes('/api/auth/login') ||
+          req.originalUrl.includes('/api/auth/logout')
+        );
+        */
+
+        if (!isMutation) {
+          return;
+        }
+
+
+        // Get action name using full URL
+        const action = getActionName(req);
+
+        // Skip if action is invalid
+        if (!action || action === 'UPDATE_UNKNOWN' || action === 'CREATE_UNKNOWN') {
+          console.log('⏭️ [AUDIT] Skipping invalid action:', action);
+          return;
+        }
+
+        const isSuccess = body && body.success !== false && !body.error;
+
+        console.log('💾 [AUDIT] Creating log:', action, 'User:', req.user.email);
 
         const logData = {
           userId: req.user.id,
-          action: getActionName(req),
+          action: action,
           companyId: req.user.companyId || null,
-          schoolId: req.body?.organizationId || req.params?.orgId || req.body?.schoolId || null,
+          schoolId: getSchoolId(req, body),
           targetId: getTargetId(req, body),
-          targetModel: getTargetModel(req.path),
+          targetModel: getTargetModel(req.originalUrl),
           details: {
             method: req.method,
-            path: req.path,
+            path: req.originalUrl,
             params: req.params,
             query: Object.keys(req.query).length > 0 ? req.query : undefined,
             body: sanitizeBody(req.body),
@@ -81,33 +89,11 @@ const globalAudit = (req, res, next) => {
           responseTime: Date.now() - req._startTime
         };
 
-        console.log('📝 Creating audit log:', {
-          action: logData.action,
-          companyId: logData.companyId,
-          userId: logData.userId
-        });
-
         const auditLog = await AuditLog.create(logData);
-
-        // Emit socket event for real-time audit updates
-        if (auditLog) {
-          socketService.emit('audit:new', {
-            _id: auditLog._id,
-            action: auditLog.action,
-            status: auditLog.status,
-            importance: auditLog.importance,
-            companyId: auditLog.companyId,
-            userId: req.user.id,
-            targetModel: auditLog.targetModel,
-            targetId: auditLog.targetId,
-            details: auditLog.details,
-            createdAt: auditLog.createdAt
-          });
-        }
+        console.log('✅ [AUDIT] Saved:', auditLog._id);
 
       } catch (error) {
-        console.error('Audit log failed:', error.message);
-        // Never break the response for audit failures
+        console.error('❌ [AUDIT] Failed:', error.message);
       }
     });
 
@@ -117,105 +103,159 @@ const globalAudit = (req, res, next) => {
   next();
 };
 
-/**
- * Determine action name from request
- */
+// ==================== HELPER FUNCTIONS ====================
+
 function getActionName(req) {
   const method = req.method;
-  const path = req.path;
+  // ✅ CRITICAL: Use originalUrl for full path matching
+  const fullUrl = req.originalUrl;
 
-  // Map routes to actions
-  if (path.includes('/auth/login')) return 'LOGIN';
-  if (path.includes('/auth/register/complete')) return 'CREATE_REGISTER';
+  console.log('🔍 Getting action name for:', { method, fullUrl });
 
-  if (path.includes('/students/bulk-import')) return 'BULK_CREATE_STUDENTS';
-  if (path.includes('/students/delete-all')) return 'BULK_DELETE_STUDENTS';
-  if (path.includes('/students')) {
-    if (method === 'POST') return 'CREATE_STUDENT';
+  // ==================== STUDENT ROUTES ====================
+  if (fullUrl.includes('/students')) {
+    if (method === 'POST') {
+      if (fullUrl.includes('/bulk-import-with-photos')) return 'BULK_UPLOAD_PHOTOS';
+      if (fullUrl.includes('/bulk-import')) return 'BULK_CREATE_STUDENTS';
+      return 'CREATE_STUDENT';
+    }
     if (method === 'PUT') return 'UPDATE_STUDENT';
-    if (method === 'DELETE') return 'DELETE_STUDENT';
+    if (method === 'PATCH') return 'UPDATE_STUDENT';
+    if (method === 'DELETE') {
+      if (fullUrl.includes('/delete-all')) return 'BULK_DELETE_STUDENTS';
+      return 'DELETE_STUDENT';
+    }
   }
 
-  if (path.includes('/organizations')) {
+  // ==================== ORGANIZATION/SCHOOL ROUTES ====================
+  if (fullUrl.includes('/organizations')) {
     if (method === 'POST') return 'CREATE_SCHOOL';
     if (method === 'PUT') return 'UPDATE_SCHOOL';
     if (method === 'DELETE') return 'DELETE_SCHOOL';
   }
 
-  if (path.includes('/co-workers/bulk')) return 'BULK_CREATE_STAFF';
-  if (path.includes('/co-workers')) {
-    if (method === 'POST') return 'CREATE_STAFF';
+  // ==================== CO-WORKER ROUTES ====================
+  if (fullUrl.includes('/co-workers')) {
+    if (method === 'POST') {
+      if (fullUrl.includes('/bulk')) return 'BULK_CREATE_STAFF';
+      if (fullUrl.includes('/resend-invite')) return 'RESEND_STAFF_INVITE';
+      return 'CREATE_STAFF';
+    }
     if (method === 'PUT') return 'UPDATE_STAFF';
-    if (method === 'PATCH') return 'UPDATE_STAFF_PERMISSIONS';
-    if (method === 'DELETE') return 'DELETE_STAFF';
+    if (method === 'PATCH') {
+      if (fullUrl.includes('/permissions')) return 'UPDATE_STAFF_PERMISSIONS';
+      return 'UPDATE_STAFF';
+    }
+    if (method === 'DELETE') {
+      if (req.query.permanent === 'true') return 'DELETE_STAFF';
+      return 'DEACTIVATE_STAFF';
+    }
   }
 
-  if (path.includes('/templates/upload')) return 'CREATE_TEMPLATE';
-  if (path.includes('/templates')) {
+  // ==================== AUTH ROUTES ====================
+  if (fullUrl.includes('/auth')) {
+    if (fullUrl.includes('/login')) return 'LOGIN';
+    if (fullUrl.includes('/logout')) return 'LOGOUT';
+    if (fullUrl.includes('/change-password')) return 'PASSWORD_CHANGE';
+    if (fullUrl.includes('/reset-password')) return 'PASSWORD_RESET';
+    if (fullUrl.includes('/forgot-password')) return 'PASSWORD_RESET';
+    if (fullUrl.includes('/register')) {
+      if (fullUrl.includes('/complete')) return 'CREATE_REGISTER';
+      return 'CREATE_REGISTER';
+    }
+    if (fullUrl.includes('/profile')) {
+      if (method === 'PUT') return 'UPDATE_USER';
+    }
+  }
+
+  // ==================== CARD ROUTES ====================
+  if (fullUrl.includes('/card')) {
+    if (method === 'POST') {
+      if (fullUrl.includes('/generate-single')) return 'GENERATE_CARD';
+      if (fullUrl.includes('/process-csv-generate')) return 'BULK_GENERATE_CARDS';
+      if (fullUrl.includes('/upload-student-photo')) return 'UPLOAD_PHOTO';
+      return 'GENERATE_CARD';
+    }
+    if (method === 'PUT') return 'UPDATE_CARD';
+    if (method === 'DELETE') return 'DELETE_CARD';
+  }
+
+  // ==================== TEMPLATE ROUTES ====================
+  if (fullUrl.includes('/templates')) {
+    if (method === 'POST') {
+      if (fullUrl.includes('/upload')) return 'CREATE_TEMPLATE';
+      return 'CREATE_TEMPLATE';
+    }
+    if (method === 'PUT') return 'UPDATE_TEMPLATE';
+    if (method === 'PATCH') {
+      if (fullUrl.includes('/set-default')) return 'UPDATE_TEMPLATE';
+      return 'UPDATE_TEMPLATE';
+    }
     if (method === 'DELETE') return 'DELETE_TEMPLATE';
   }
 
-  if (path.includes('/card/generate-single')) return 'GENERATE_CARD';
-  if (path.includes('/card/process-csv-generate')) return 'BULK_GENERATE_CARDS';
-  if (path.includes('/card/upload-student-photo')) return 'UPLOAD_PHOTO';
-
-  if (path.includes('/company/license')) return 'SUBSCRIPTION_UPDATED';
-  if (path.includes('/company')) {
-    if (method === 'PUT') return 'UPDATE_SETTINGS';
+  // ==================== COMPANY ROUTES ====================
+  if (fullUrl.includes('/company')) {
+    if (fullUrl.includes('/license')) {
+      if (method === 'POST') return 'SUBSCRIPTION_CREATED';
+      if (method === 'PUT') return 'SUBSCRIPTION_UPDATED';
+      if (method === 'DELETE') return 'SUBSCRIPTION_CANCELLED';
+    }
+    if (fullUrl.includes('/revoke-license')) return 'SUBSCRIPTION_CANCELLED';
+    if (method === 'PUT') {
+      if (fullUrl.includes('/profile')) return 'UPDATE_SETTINGS';
+      return 'UPDATE_SETTINGS';
+    }
   }
 
-  if (path.includes('/auth/change-password')) return 'PASSWORD_CHANGE';
-  if (path.includes('/auth/profile')) return 'UPDATE_USER';
+  // ==================== AUDIT ROUTES ====================
+  if (fullUrl.includes('/audit')) {
+    if (method === 'GET') return 'VIEW_AUDIT_LOGS';
+    if (method === 'POST') {
+      if (fullUrl.includes('/export')) return 'EXPORT_AUDIT_LOGS';
+    }
+  }
 
-  // Default
-  return `${method}_${path.split('/').filter(Boolean).join('_')}`.toUpperCase();
+  // ==================== DEFAULT ====================
+  console.warn(`⚠️ Unmapped route: ${method} ${fullUrl}`);
+  return null; // Return null for unmapped routes
 }
 
-/**
- * Extract target ID from request or response
- */
+function getSchoolId(req, body) {
+  if (req.params.orgId) return req.params.orgId;
+  if (req.params.schoolId) return req.params.schoolId;
+  if (req.body?.organizationId) return req.body.organizationId;
+  if (req.body?.schoolId) return req.body.schoolId;
+  if (body?.organization?._id) return body.organization._id;
+  if (body?.student?.schoolId) return body.student.schoolId;
+  return null;
+}
+
 function getTargetId(req, body) {
-  // From params
   if (req.params.id) return req.params.id;
-  // From body response
   if (body?.student?._id) return body.student._id;
   if (body?.organization?._id) return body.organization._id;
   if (body?.coWorker?.id) return body.coWorker.id;
-  if (body?.company?.id) return body.company.id;
-  // From body request
-  if (req.body?.studentId) return req.body.studentId;
-  if (req.body?.organizationId) return req.body.organizationId;
   return null;
 }
 
-/**
- * Map path to model name
- */
-function getTargetModel(path) {
-  if (path.includes('students')) return 'Student';
-  if (path.includes('organizations')) return 'School';
-  if (path.includes('co-workers')) return 'User';
-  if (path.includes('templates')) return 'Template';
-  if (path.includes('card')) return 'Card';
-  if (path.includes('company')) return 'Company';
-  if (path.includes('auth')) return 'User';
+function getTargetModel(url) {
+  if (url.includes('students')) return 'Student';
+  if (url.includes('organizations')) return 'School';
+  if (url.includes('co-workers')) return 'User';
+  if (url.includes('templates')) return 'Template';
+  if (url.includes('card')) return 'Card';
+  if (url.includes('company')) return 'Company';
   return null;
 }
 
-/**
- * Determine importance level
- */
 function getImportance(req) {
   if (req.method === 'DELETE') return 'high';
-  if (req.path.includes('license') || req.path.includes('revoke')) return 'critical';
-  if (req.path.includes('bulk')) return 'high';
-  if (req.path.includes('auth')) return 'high';
+  if (req.originalUrl.includes('license') || req.originalUrl.includes('revoke')) return 'critical';
+  if (req.originalUrl.includes('bulk')) return 'high';
   return 'medium';
 }
 
-/**
- * Sanitize request body - remove sensitive fields
- */
 function sanitizeBody(body) {
   if (!body) return undefined;
   const sanitized = { ...body };
