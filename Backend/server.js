@@ -20,7 +20,8 @@ const io = socketIo(server, {
     origin: function (origin, callback) {
       const allowedOrigins = [
         'http://localhost:5173',
-        'https://card-agent-backend.fly.dev'
+        'https://card-agent-virid.vercel.app',  // ✅ Add your Vercel domain
+
       ];
       if (!origin || allowedOrigins.indexOf(origin) !== -1) {
         callback(null, true);
