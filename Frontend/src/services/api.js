@@ -21,8 +21,9 @@ class APICache {
   clear() { this.cache.clear(); }
 }
 
-// Environment detection
+// Environment detection - FIXED VERSION
 const getApiBaseUrl = () => {
+  // Use environment variable if set (production)
   if (import.meta.env.VITE_API_URL) {
     return import.meta.env.VITE_API_URL;
   }
@@ -32,7 +33,7 @@ const getApiBaseUrl = () => {
     return 'http://localhost:5000/api';
   }
 
-  // Production fallback - use your actual backend URL
+  // Production fallback
   return 'https://card-agent-backend.fly.dev/api';
 };
 
