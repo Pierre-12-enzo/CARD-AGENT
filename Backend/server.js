@@ -162,7 +162,8 @@ module.exports = { app, server, io };
 const allowedOrigins = [
   //'https://cap-mis.vercel.app',
   'http://localhost:5173',
-  //'https://cap-mis.ilelio.rw'
+  'https://card-agent-virid.vercel.app',  // ✅ Add your Vercel domain
+
 ];
 
 const corsOptions = {
