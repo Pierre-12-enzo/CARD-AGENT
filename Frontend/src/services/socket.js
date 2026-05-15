@@ -12,7 +12,8 @@ const getSocketUrl = () => {
         return 'http://localhost:5000'; // Backend port
     }
     // Production
-    return window.location.origin;
+    // Production - USE YOUR BACKEND URL, NOT window.location.origin
+    return import.meta.env.VITE_API_URL;
 };
 
 const SOCKET_URL = getSocketUrl();
