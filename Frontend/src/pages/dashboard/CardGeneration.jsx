@@ -1,9 +1,12 @@
-// pages/dashboard/CardGeneration.jsx - CARD-AGENT with Drag & Drop + Student/Employee Support
+// pages/dashboard/CardGeneration.jsx - CARD-AGENT with @dnd-kit Drag & Drop
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import Draggable from 'react-draggable';
+import { DndContext, useDraggable, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
+import { CSS } from '@dnd-kit/utilities';
 import { cardAPI, templateAPI } from '../../services/api';
 import toast from 'react-hot-toast';
 
+
+// ==================== MAIN COMPONENT ====================
 const CardGeneration = () => {
     // ==================== STATE ====================
     const [activeStep, setActiveStep] = useState('upload');
@@ -19,7 +22,6 @@ const CardGeneration = () => {
     const [templates, setTemplates] = useState([]);
     const [selectedTemplateId, setSelectedTemplateId] = useState('');
     const [photoUploadStatus, setPhotoUploadStatus] = useState('idle');
-    const [batchId, setBatchId] = useState(null);
     const [showStudentSelect, setShowStudentSelect] = useState(false);
     const [showQuickCreateModal, setShowQuickCreateModal] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
@@ -27,7 +29,7 @@ const CardGeneration = () => {
     // Organizations & Person Filter
     const [organizations, setOrganizations] = useState([]);
     const [selectedOrgId, setSelectedOrgId] = useState('');
-    const [personFilter, setPersonFilter] = useState('all'); // 'all', 'student', 'employee'
+    const [personFilter, setPersonFilter] = useState('all');
 
     // Quick create
     const [quickStudent, setQuickStudent] = useState({
@@ -45,7 +47,7 @@ const CardGeneration = () => {
     const [csvFile, setCsvFile] = useState(null);
     const [photoZipFile, setPhotoZipFile] = useState(null);
 
-    // 🔥 Coordinates - kept for flexibility + drag support
+    // Coordinates
     const [coordinates, setCoordinates] = useState({
         photo: { x: 50, y: 230, width: 250, height: 250 },
         name: { x: 580, y: 225, maxWidth: 500 },
@@ -58,14 +60,20 @@ const CardGeneration = () => {
     });
 
     const [templateDimensions, setTemplateDimensions] = useState({ width: 1080, height: 607 });
-    const [templatePreviewUrl, setTemplatePreviewUrl] = useState('');
-    const [draggingField, setDraggingField] = useState(null);
+    const [activeDragField, setActiveDragField] = useState(null);
     const previewContainerRef = useRef(null);
+
+    // @dnd-kit sensors
+    const sensors = useSensors(
+        useSensor(PointerSensor, {
+            activationConstraint: { distance: 5 },
+        })
+    );
 
     // ==================== LOAD DATA ====================
     useEffect(() => { loadOrganizations(); loadTemplates(); }, []);
     useEffect(() => { if (selectedOrgId) { loadOrgStudents(); } }, [selectedOrgId]);
-    useEffect(() => { if (selectedTemplateId) { loadTemplateDimensions(); loadTemplatePreview(); } }, [selectedTemplateId]);
+    useEffect(() => { if (selectedTemplateId) { loadTemplateDimensions(); } }, [selectedTemplateId]);
 
     const loadOrganizations = async () => {
         try {
@@ -109,11 +117,54 @@ const CardGeneration = () => {
         } catch (error) { console.error('Failed to load dimensions:', error); }
     };
 
-    const loadTemplatePreview = async () => {
-        const template = templates.find(t => t._id === selectedTemplateId);
-        if (template?.frontSideUrl) {
-            setTemplatePreviewUrl(template.frontSideUrl);
-        }
+    // ==================== DRAG HANDLER ====================
+    const handleDragEnd = useCallback((event) => {
+        const { active, delta } = event;
+        if (!active || !previewContainerRef.current) return;
+
+        setActiveDragField(null);
+
+        const container = previewContainerRef.current;
+        const rect = container.getBoundingClientRect();
+        const scaleX = templateDimensions.originalWidth / rect.width;
+        const scaleY = templateDimensions.originalHeight / rect.height;
+
+        const field = active.id;
+        const currentCoord = coordinates[field];
+        if (!currentCoord) return;
+
+        const previewScale = templateDimensions.width / templateDimensions.originalWidth;
+        const currentDisplayX = (currentCoord.x * previewScale) || 0;
+        const currentDisplayY = (currentCoord.y * previewScale) || 0;
+
+        const newDisplayX = currentDisplayX + delta.x;
+        const newDisplayY = currentDisplayY + delta.y;
+
+        const newX = Math.max(0, Math.round(newDisplayX / previewScale));
+        const newY = Math.max(0, Math.round(newDisplayY / previewScale));
+
+        setCoordinates(prev => ({
+            ...prev,
+            [field]: {
+                ...prev[field],
+                x: newX,
+                y: newY
+            }
+        }));
+    }, [coordinates, templateDimensions]);
+
+    const handleDragStart = useCallback((event) => {
+        setActiveDragField(event.active.id);
+    }, []);
+
+    const handleCoordinateInputChange = (field, key, value) => {
+        setCoordinates(prev => ({
+            ...prev,
+            [field]: {
+                ...prev[field],
+                [key]: parseInt(value) || 0
+            }
+        }));
     };
 
     // ==================== FILTERING ====================
@@ -131,35 +182,6 @@ const CardGeneration = () => {
         }
         return matches;
     });
-
-    // ==================== DRAG HANDLERS ====================
-    const handleDrag = (field, e, data) => {
-        const container = previewContainerRef.current;
-        if (!container) return;
-
-        const rect = container.getBoundingClientRect();
-        const scaleX = templateDimensions.originalWidth / rect.width;
-        const scaleY = templateDimensions.originalHeight / rect.height;
-
-        setCoordinates(prev => ({
-            ...prev,
-            [field]: {
-                ...prev[field],
-                x: Math.round(data.x * scaleX),
-                y: Math.round(data.y * scaleY)
-            }
-        }));
-    };
-
-    const handleCoordinateInputChange = (field, key, value) => {
-        setCoordinates(prev => ({
-            ...prev,
-            [field]: {
-                ...prev[field],
-                [key]: parseInt(value) || 0
-            }
-        }));
-    };
 
     // ==================== HANDLERS ====================
     const handleOrgChange = async (orgId) => {
@@ -269,7 +291,7 @@ const CardGeneration = () => {
         if (!selectedTemplateId || !selectedOrgId) {
             toast.error('Select organization and template'); return;
         }
-        const filtered = filteredStudents.filter(s => s.personType === 'student' || s.personType === 'employee');
+        const filtered = filteredStudents;
         if (filtered.length === 0) { toast.error('No people match your filters'); return; }
 
         setGenerationStatus('processing'); setProgress(0);
@@ -301,6 +323,7 @@ const CardGeneration = () => {
     const selectedOrg = organizations.find(o => o._id === selectedOrgId);
     const studentCount = students.filter(s => s.personType === 'student').length;
     const employeeCount = students.filter(s => s.personType === 'employee').length;
+    const previewScale = templateDimensions.width / (templateDimensions.originalWidth || 1200);
 
     return (
         <div className="min-h-screen bg-slate-50 p-4 sm:p-6">
@@ -310,7 +333,7 @@ const CardGeneration = () => {
                     <h1 className="text-2xl sm:text-3xl font-bold bg-gradient-to-r from-slate-800 to-red-600 bg-clip-text text-transparent">
                         Card Generation Studio
                     </h1>
-                    <p className="text-slate-500 mt-1">Design and generate professional ID cards for students & employees</p>
+                    <p className="text-slate-500 mt-1">Design and generate professional ID cards with drag & drop positioning</p>
                 </div>
 
                 {/* Organization Selector */}
@@ -377,20 +400,20 @@ const CardGeneration = () => {
                     </div>
                 </div>
 
-                {/* 🔥 Person Type Filter (for batch from database) */}
+                {/* Person Type Filter */}
                 {selectedOrgId && generationMode === 'batch' && batchMethod === 'database' && (
                     <div className="bg-white rounded-2xl shadow-lg border border-slate-200/50 p-4 mb-6">
                         <label className="block text-sm font-medium text-slate-700 mb-2">Filter by Type</label>
                         <div className="flex gap-2">
                             {[
                                 { value: 'all', label: 'All', count: students.length },
-                                { value: 'student', label: 'Students', count: studentCount },
-                                { value: 'employee', label: 'Employees', count: employeeCount }
+                                { value: 'student', label: '🎓 Students', count: studentCount },
+                                { value: 'employee', label: '💼 Employees', count: employeeCount }
                             ].map(opt => (
                                 <button key={opt.value} onClick={() => setPersonFilter(opt.value)}
                                     className={`px-4 py-2 rounded-xl text-sm font-medium transition-all ${personFilter === opt.value
-                                            ? 'bg-red-600 text-white'
-                                            : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                                        ? 'bg-red-600 text-white shadow-lg'
+                                        : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
                                         }`}>
                                     {opt.label} ({opt.count})
                                 </button>
@@ -402,10 +425,10 @@ const CardGeneration = () => {
                 {/* Workflow Steps */}
                 <div className="bg-white rounded-2xl shadow-lg border border-slate-200/50 p-5 mb-6">
                     <div className="grid grid-cols-4 gap-3">
-                        <StepButton step="1" title="Setup" active={activeStep === 'upload'} onClick={() => setActiveStep('upload')} />
-                        <StepButton step="2" title="Template" active={activeStep === 'template'} onClick={() => setActiveStep('template')} />
-                        <StepButton step="3" title="Position" active={activeStep === 'coordinates'} onClick={() => setActiveStep('coordinates')} />
-                        <StepButton step="4" title="Generate" active={activeStep === 'process'} onClick={() => setActiveStep('process')} />
+                        <StepButton step="1" title="Setup" icon="pi-cog" active={activeStep === 'upload'} onClick={() => setActiveStep('upload')} />
+                        <StepButton step="2" title="Template" icon="pi-image" active={activeStep === 'template'} onClick={() => setActiveStep('template')} />
+                        <StepButton step="3" title="Position" icon="pi-arrows-alt" active={activeStep === 'coordinates'} onClick={() => setActiveStep('coordinates')} />
+                        <StepButton step="4" title="Generate" icon="pi-play" active={activeStep === 'process'} onClick={() => setActiveStep('process')} />
                     </div>
                 </div>
 
@@ -482,7 +505,6 @@ const CardGeneration = () => {
                                         </div>
                                     ) : (
                                         <>
-                                            {/* 🔥 Person type filter for single mode */}
                                             <div className="flex gap-2">
                                                 {['all', 'student', 'employee'].map(type => (
                                                     <button key={type} onClick={() => setPersonFilter(type)}
@@ -561,9 +583,9 @@ const CardGeneration = () => {
                                                     <div className="flex justify-between items-start">
                                                         <div>
                                                             <h4 className="font-semibold text-slate-800">{template.name}</h4>
-                                                            <p className="text-xs text-slate-500 capitalize">{template.templateType === 'two-sided' ? 'Double-sided' : 'Single-sided'}</p>
+                                                            <p className="text-xs text-slate-500 capitalize">{template.templateType === 'two-sided' ? '🔄 Double-sided' : '📄 Single-sided'}</p>
                                                         </div>
-                                                        {template.isDefault && <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded-full">Default</span>}
+                                                        {template.isDefault && <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded-full">⭐ Default</span>}
                                                     </div>
                                                     {template.frontSideUrl && <div className="mt-2 w-full h-20 bg-slate-100 rounded-lg overflow-hidden"><img src={template.frontSideUrl} className="w-full h-full object-cover" /></div>}
                                                     {selectedTemplateId === template._id && <p className="text-xs text-red-600 mt-2 text-center font-medium">✓ Selected</p>}
@@ -572,88 +594,175 @@ const CardGeneration = () => {
                                         </div>
                                     )}
                                     <button onClick={() => setActiveStep('coordinates')} disabled={!selectedTemplateId}
-                                        className="w-full bg-gradient-to-r from-red-600 to-red-500 text-white py-3 rounded-xl font-medium disabled:opacity-50">Continue to Positioning</button>
+                                        className="w-full bg-gradient-to-r from-red-600 to-red-500 text-white py-3 rounded-xl font-medium disabled:opacity-50">
+                                        Continue to Positioning <i className="pi pi-arrow-right ml-2"></i>
+                                    </button>
                                 </div>
                             )}
 
-                            {/* 🔥 STEP 3: COORDINATES - DRAG & DROP + MANUAL INPUT */}
+                            {/* STEP 3: COORDINATES - @dnd-kit DRAG & DROP */}
                             {activeStep === 'coordinates' && (
                                 <div className="space-y-4">
                                     <div className="flex items-center justify-between">
                                         <div>
                                             <h3 className="text-lg font-semibold text-slate-800">Position Fields</h3>
-                                            <p className="text-sm text-slate-500">Drag fields on the preview or enter coordinates manually</p>
+                                            <p className="text-sm text-slate-500">Drag & drop fields on the template preview</p>
                                         </div>
-                                        <span className="text-xs bg-green-50 text-green-700 px-2 py-1 rounded-full">Drag & Drop Mode</span>
+                                        <div className="flex items-center gap-2">
+                                            <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+                                            <span className="text-xs bg-green-50 text-green-700 px-2 py-1 rounded-full font-medium">🖱️ Drag & Drop Active</span>
+                                        </div>
                                     </div>
 
-                                    {/* 🔥 Drag & Drop Preview */}
-                                    {templatePreviewUrl && (
-                                        <div className="relative border-2 border-slate-300 rounded-xl overflow-hidden bg-slate-200"
-                                            ref={previewContainerRef}
-                                            style={{ minHeight: '300px' }}>
-                                            <img src={templatePreviewUrl} alt="Template" className="w-full" draggable={false} />
+                                    {/* 🔥 @dnd-kit Drag & Drop Preview */}
+                                    {selectedTemplate?.frontSideUrl ? (
+                                        <DndContext
+                                            sensors={sensors}
+                                            onDragStart={handleDragStart}
+                                            onDragEnd={handleDragEnd}
+                                        >
+                                            <div
+                                                className="relative border-2 border-slate-300 rounded-xl overflow-hidden bg-gradient-to-br from-slate-900 to-slate-800 shadow-inner"
+                                                ref={previewContainerRef}
+                                                style={{ minHeight: '350px', touchAction: 'none' }}
+                                            >
+                                                <img
+                                                    src={selectedTemplate.frontSideUrl}
+                                                    alt="Template"
+                                                    className="w-full opacity-90 pointer-events-none select-none"
+                                                    draggable={false}
+                                                />
 
-                                            {/* Draggable Fields */}
-                                            {Object.entries(coordinates).map(([field, coord]) => {
-                                                const previewScale = templateDimensions.width / templateDimensions.originalWidth;
-                                                const displayX = (coord.x * previewScale) || 0;
-                                                const displayY = (coord.y * previewScale) || 0;
+                                                {/* Grid Overlay */}
+                                                <div className="absolute inset-0 pointer-events-none opacity-[0.07]">
+                                                    <div className="grid grid-cols-12 h-full w-full">
+                                                        {Array.from({ length: 96 }).map((_, i) => (
+                                                            <div key={i} className="border border-white/30"></div>
+                                                        ))}
+                                                    </div>
+                                                </div>
 
-                                                return (
-                                                    <Draggable
-                                                        key={field}
-                                                        position={{ x: displayX, y: displayY }}
-                                                        onStop={(e, data) => handleDrag(field, e, data)}
-                                                        bounds="parent"
-                                                    >
-                                                        <div
-                                                            className={`absolute cursor-move px-2 py-1 rounded-md text-xs font-medium shadow-md border-2 transition-all hover:shadow-lg ${draggingField === field
-                                                                    ? 'bg-red-600 text-white border-red-700 z-50 scale-110'
-                                                                    : field === 'photo'
-                                                                        ? 'bg-purple-500/80 text-white border-purple-600'
-                                                                        : 'bg-white/90 text-slate-700 border-slate-400'
-                                                                }`}
-                                                            onMouseDown={() => setDraggingField(field)}
-                                                            onMouseUp={() => setDraggingField(null)}
-                                                        >
-                                                            {field === 'photo' ? '📷 Photo' : field.replace('_', ' ')}
+                                                {/* Ruler marks on edges */}
+                                                <div className="absolute top-0 left-0 right-0 h-4 pointer-events-none opacity-30">
+                                                    {Array.from({ length: 12 }).map((_, i) => (
+                                                        <div key={i} className="absolute text-[8px] text-white" style={{ left: `${(i / 12) * 100}%` }}>
+                                                            {Math.round((i / 12) * templateDimensions.originalWidth)}
                                                         </div>
-                                                    </Draggable>
-                                                );
-                                            })}
+                                                    ))}
+                                                </div>
+
+                                                {/* Draggable Fields */}
+                                                {Object.entries(coordinates).map(([field, coord]) => {
+                                                    // 🔥 Get actual data from selected student (for single mode) or sample data
+                                                    const hasStudent = generationMode === 'single' && selectedStudent;
+                                                    const sampleStudent = students[0]; // First student as sample for batch mode
+
+                                                    const getFieldValue = (f) => {
+                                                        if (hasStudent) {
+                                                            const s = selectedStudent;
+                                                            const values = {
+                                                                photo: s.has_photo ? '📷' : '📷+',
+                                                                name: s.name || 'Name',
+                                                                student_id: s.student_id || 'ID',
+                                                                class: s.studentDetails?.class || s.employeeDetails?.department || 'Class',
+                                                                level: s.studentDetails?.level || s.employeeDetails?.position || 'Level',
+                                                                gender: s.gender || 'Gender',
+                                                                residence: s.residence || 'Residence',
+                                                                academic_year: s.studentDetails?.academic_year || 'Year'
+                                                            };
+                                                            return values[f] || f;
+                                                        }
+                                                        if (sampleStudent) {
+                                                            const s = sampleStudent;
+                                                            const values = {
+                                                                photo: s.has_photo ? '📷 Photo' : '📷+ Photo',
+                                                                name: s.name || 'Name',
+                                                                student_id: s.student_id || 'ID',
+                                                                class: s.studentDetails?.class || s.employeeDetails?.department || 'Class',
+                                                                level: s.studentDetails?.level || s.employeeDetails?.position || 'Level',
+                                                                gender: s.gender || 'Gender',
+                                                                residence: s.residence || 'Residence',
+                                                                academic_year: s.studentDetails?.academic_year || 'Year'
+                                                            };
+                                                            return values[f] || f;
+                                                        }
+                                                        // Fallback labels
+                                                        const labels = {
+                                                            photo: '📷 Photo', name: '👤 Name', student_id: '🆔 ID',
+                                                            class: '📚 Class', level: '📊 Level', gender: '⚧ Gender',
+                                                            residence: '🏠 Residence', academic_year: '📅 Year'
+                                                        };
+                                                        return labels[f] || f.replace('_', ' ');
+                                                    };
+
+                                                    const isPhotoField = field === 'photo';
+                                                    const displayX = (coord.x * previewScale) || 0;
+                                                    const displayY = (coord.y * previewScale) || 0;
+                                                    const fieldLabel = getFieldValue(field);
+
+                                                    return (
+                                                        <DraggableItem
+                                                            key={field}
+                                                            id={field}
+                                                            displayX={displayX}
+                                                            displayY={displayY}
+                                                            label={fieldLabel}
+                                                            isPhotoField={isPhotoField}
+                                                            isActive={activeDragField === field}
+                                                            hasStudent={hasStudent || !!sampleStudent}
+                                                        />
+                                                    );
+                                                })}
+                                            </div>
+                                        </DndContext>
+                                    ) : (
+                                        <div className="text-center py-16 bg-slate-100 rounded-xl border-2 border-dashed border-slate-300">
+                                            <i className="pi pi-image text-4xl text-slate-400 mb-3 block"></i>
+                                            <p className="text-slate-500">Select a template first</p>
                                         </div>
                                     )}
 
-                                    {/* 🔥 Manual Coordinate Inputs (kept for precision) */}
-                                    <div className="bg-slate-50 rounded-xl p-3 border border-slate-200">
-                                        <p className="text-xs text-slate-500 mb-2">Fine-tune coordinates manually</p>
+                                    {/* Keyboard shortcuts hint */}
+                                    <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 flex items-center gap-3">
+                                        <i className="pi pi-info-circle text-blue-600"></i>
+                                        <div className="text-xs text-blue-700">
+                                            <span className="font-semibold">Pro Tip:</span> After dragging, use the fine-tune inputs below for pixel-perfect positioning.
+                                        </div>
+                                    </div>
+
+                                    {/* Fine-tune Coordinate Inputs */}
+                                    <div className="bg-slate-50 rounded-xl p-4 border border-slate-200">
+                                        <p className="text-xs font-medium text-slate-600 mb-3">🎯 Fine-Tune Coordinates</p>
                                         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-48 overflow-y-auto">
                                             {Object.entries(coordinates).map(([field, coord]) => (
-                                                <div key={field} className="flex items-center gap-1 bg-white rounded-lg px-2 py-1.5 border border-slate-200">
-                                                    <span className="text-xs text-slate-500 capitalize w-12 truncate">{field.replace('_', ' ')}</span>
-                                                    <input
-                                                        type="number"
-                                                        placeholder="X"
-                                                        value={coord.x}
-                                                        onChange={(e) => handleCoordinateInputChange(field, 'x', e.target.value)}
-                                                        className="w-12 px-1 py-0.5 border border-slate-200 rounded text-xs text-center"
-                                                    />
-                                                    <input
-                                                        type="number"
-                                                        placeholder="Y"
-                                                        value={coord.y}
-                                                        onChange={(e) => handleCoordinateInputChange(field, 'y', e.target.value)}
-                                                        className="w-12 px-1 py-0.5 border border-slate-200 rounded text-xs text-center"
-                                                    />
+                                                <div key={field} className="flex items-center gap-1.5 bg-white rounded-lg px-3 py-2 border border-slate-200 shadow-sm">
+                                                    <span className="text-xs text-slate-500 capitalize w-14 truncate font-medium">{field.replace('_', ' ')}</span>
+                                                    <div className="flex items-center gap-1">
+                                                        <span className="text-[10px] text-slate-400">X</span>
+                                                        <input
+                                                            type="number"
+                                                            value={coord.x}
+                                                            onChange={(e) => handleCoordinateInputChange(field, 'x', e.target.value)}
+                                                            className="w-14 px-1.5 py-1 border border-slate-200 rounded-md text-xs text-center focus:ring-1 focus:ring-red-500"
+                                                        />
+                                                    </div>
+                                                    <div className="flex items-center gap-1">
+                                                        <span className="text-[10px] text-slate-400">Y</span>
+                                                        <input
+                                                            type="number"
+                                                            value={coord.y}
+                                                            onChange={(e) => handleCoordinateInputChange(field, 'y', e.target.value)}
+                                                            className="w-14 px-1.5 py-1 border border-slate-200 rounded-md text-xs text-center focus:ring-1 focus:ring-red-500"
+                                                        />
+                                                    </div>
                                                 </div>
                                             ))}
                                         </div>
                                     </div>
 
                                     <button onClick={() => setActiveStep('process')}
-                                        className="w-full bg-gradient-to-r from-red-600 to-red-500 text-white py-3 rounded-xl font-medium">
-                                        Continue to Generate
+                                        className="w-full bg-gradient-to-r from-red-600 to-red-500 text-white py-3 rounded-xl font-medium hover:from-red-700 hover:to-red-600 transition-all shadow-lg">
+                                        Continue to Generate <i className="pi pi-arrow-right ml-2"></i>
                                     </button>
                                 </div>
                             )}
@@ -678,7 +787,7 @@ const CardGeneration = () => {
                                                     </p>
                                                 </div>
                                             </div>
-                                            {!selectedStudent.has_photo && <p className="text-xs text-amber-600 mt-1">⚠️ No photo</p>}
+                                            {!selectedStudent.has_photo && <p className="text-xs text-amber-600 mt-1">⚠️ No photo - placeholder will be used</p>}
                                         </div>
                                     )}
 
@@ -697,9 +806,9 @@ const CardGeneration = () => {
                                     )}
 
                                     {selectedTemplate && (
-                                        <div className="text-left text-sm text-slate-600">
-                                            Template: <span className="font-medium text-slate-800">{selectedTemplate.name}</span>
-                                            <span className="ml-2 text-xs bg-slate-100 px-2 py-0.5 rounded-full capitalize">{selectedTemplate.templateType}</span>
+                                        <div className="text-left text-sm text-slate-600 bg-slate-50 p-3 rounded-xl">
+                                            <span className="font-medium text-slate-800">{selectedTemplate.name}</span>
+                                            <span className="ml-2 text-xs bg-slate-200 px-2 py-0.5 rounded-full capitalize">{selectedTemplate.templateType}</span>
                                         </div>
                                     )}
 
@@ -709,30 +818,37 @@ const CardGeneration = () => {
                                         else if (batchMethod === 'database') handleBatchFromDatabase();
                                         else handleCSVProcessing();
                                     }} disabled={generationStatus === 'processing' || !selectedOrgId}
-                                        className="bg-gradient-to-r from-red-600 to-red-500 text-white px-8 py-4 rounded-2xl font-semibold text-lg disabled:opacity-50 hover:from-red-700 hover:to-red-600 transition-all shadow-lg hover:shadow-xl">
+                                        className="bg-gradient-to-r from-red-600 to-red-500 text-white px-10 py-4 rounded-2xl font-bold text-lg disabled:opacity-50 hover:from-red-700 hover:to-red-600 transition-all shadow-xl hover:shadow-2xl transform hover:-translate-y-0.5">
                                         {generationStatus === 'processing' ? (
-                                            <><i className="pi pi-spinner pi-spin mr-2"></i>Generating...</>
+                                            <><i className="pi pi-spinner pi-spin mr-2"></i>Generating Cards...</>
                                         ) : (
-                                            <><i className="pi pi-play mr-2"></i>Generate Cards</>
+                                            <><i className="pi pi-bolt mr-2"></i>Generate Cards</>
                                         )}
                                     </button>
 
                                     {generationStatus === 'processing' && (
                                         <div className="space-y-2">
-                                            <div className="flex justify-between text-sm text-slate-600"><span>Progress</span><span>{Math.round(progress)}%</span></div>
-                                            <div className="w-full bg-slate-200 rounded-full h-2">
-                                                <div className="bg-gradient-to-r from-red-600 to-red-500 h-2 rounded-full transition-all duration-500" style={{ width: `${progress}%` }}></div>
+                                            <div className="flex justify-between text-sm text-slate-600">
+                                                <span>Processing</span><span>{Math.round(progress)}%</span>
+                                            </div>
+                                            <div className="w-full bg-slate-200 rounded-full h-3 overflow-hidden">
+                                                <div className="bg-gradient-to-r from-red-600 via-red-500 to-red-400 h-3 rounded-full transition-all duration-500 animate-pulse"
+                                                    style={{ width: `${progress}%` }}></div>
                                             </div>
                                         </div>
                                     )}
                                     {generationStatus === 'completed' && (
-                                        <div className="bg-green-50 border border-green-200 p-4 rounded-xl text-green-800">
-                                            <i className="pi pi-check-circle mr-2"></i>Complete! Download started.
+                                        <div className="bg-green-50 border border-green-300 p-4 rounded-xl text-green-800 animate-scale-in">
+                                            <i className="pi pi-check-circle mr-2 text-green-600"></i>
+                                            <span className="font-semibold">Generation Complete!</span>
+                                            <p className="text-sm text-green-600 mt-1">Your download should start automatically.</p>
                                         </div>
                                     )}
                                     {generationStatus === 'error' && (
-                                        <div className="bg-red-50 border border-red-200 p-4 rounded-xl text-red-800">
-                                            <i className="pi pi-times-circle mr-2"></i>Failed. Please try again.
+                                        <div className="bg-red-50 border border-red-300 p-4 rounded-xl text-red-800">
+                                            <i className="pi pi-times-circle mr-2 text-red-600"></i>
+                                            <span className="font-semibold">Generation Failed</span>
+                                            <p className="text-sm text-red-600 mt-1">Please try again or check your data.</p>
                                         </div>
                                     )}
                                 </div>
@@ -743,7 +859,7 @@ const CardGeneration = () => {
                     {/* Right Panel - Preview */}
                     <div className="space-y-6">
                         <div className="bg-white rounded-2xl shadow-lg border border-slate-200/50 p-6 sticky top-6">
-                            <h3 className="text-lg font-semibold text-slate-800 mb-4">Live Preview</h3>
+                            <h3 className="text-lg font-semibold text-slate-800 mb-4">Template Preview</h3>
                             <div className="bg-slate-900 rounded-xl p-3">
                                 {selectedTemplate?.frontSideUrl ? (
                                     <img src={selectedTemplate.frontSideUrl} alt="Template" className="w-full rounded-lg" />
@@ -755,20 +871,36 @@ const CardGeneration = () => {
                                 )}
                             </div>
                             {selectedOrg && (
-                                <div className="mt-4 p-3 bg-slate-50 rounded-xl">
-                                    <p className="text-xs text-slate-500">Organization</p>
-                                    <p className="font-medium text-slate-800 text-sm">{selectedOrg.name}</p>
-                                    <div className="flex gap-2 mt-2">
-                                        <span className="text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full">🎓 {studentCount} Students</span>
-                                        <span className="text-xs bg-purple-50 text-purple-700 px-2 py-0.5 rounded-full">💼 {employeeCount} Employees</span>
+                                <div className="mt-4 p-4 bg-slate-50 rounded-xl space-y-3">
+                                    <div>
+                                        <p className="text-xs text-slate-500">Organization</p>
+                                        <p className="font-semibold text-slate-800">{selectedOrg.name}</p>
+                                    </div>
+                                    <div className="flex gap-2">
+                                        <span className="text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full font-medium">🎓 {studentCount} Students</span>
+                                        <span className="text-xs bg-purple-50 text-purple-700 px-2 py-0.5 rounded-full font-medium">💼 {employeeCount} Employees</span>
                                     </div>
                                 </div>
                             )}
                             {selectedTemplate && (
-                                <div className="mt-2 p-3 bg-red-50 rounded-xl">
-                                    <p className="text-xs text-red-500">Template</p>
-                                    <p className="font-medium text-red-800 text-sm">{selectedTemplate.name}</p>
-                                    <p className="text-xs text-red-600 capitalize">{selectedTemplate.templateType}</p>
+                                <div className="mt-2 p-4 bg-red-50 rounded-xl space-y-2">
+                                    <div>
+                                        <p className="text-xs text-red-500">Selected Template</p>
+                                        <p className="font-semibold text-red-800">{selectedTemplate.name}</p>
+                                    </div>
+                                    <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full capitalize font-medium">
+                                        {selectedTemplate.templateType === 'two-sided' ? '🔄 Double-sided' : '📄 Single-sided'}
+                                    </span>
+                                </div>
+                            )}
+                            {activeStep === 'coordinates' && activeDragField && (
+                                <div className="mt-2 p-3 bg-green-50 border border-green-200 rounded-xl animate-pulse">
+                                    <p className="text-xs text-green-700 font-medium">
+                                        Moving: <span className="capitalize">{String(activeDragField).replace('_', ' ')}</span>
+                                    </p>
+                                    <p className="text-xs text-green-600">
+                                        X: {coordinates[activeDragField]?.x}, Y: {coordinates[activeDragField]?.y}
+                                    </p>
                                 </div>
                             )}
                         </div>
@@ -779,7 +911,7 @@ const CardGeneration = () => {
             {/* Quick Create Modal */}
             {showQuickCreateModal && (
                 <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-                    <div className="bg-white rounded-2xl p-6 max-w-md w-full max-h-[90vh] overflow-y-auto shadow-2xl">
+                    <div className="bg-white rounded-2xl p-6 max-w-md w-full max-h-[90vh] overflow-y-auto shadow-2xl animate-scale-in">
                         <div className="flex items-center justify-between mb-4">
                             <h3 className="text-xl font-bold text-slate-800">Quick Create</h3>
                             <button onClick={() => setShowQuickCreateModal(false)} className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center hover:bg-slate-200">
@@ -798,15 +930,16 @@ const CardGeneration = () => {
                         </div>
                         <div className="space-y-3">
                             {quickStudent.personType === 'employee' && (
-                                <div className="bg-slate-50 rounded-lg p-2 text-xs text-slate-500">
-                                    💡 Employee ID will be auto-generated. Leave blank.
+                                <div className="bg-slate-50 rounded-lg p-2 text-xs text-slate-500 flex items-center gap-2">
+                                    <i className="pi pi-info-circle"></i> Employee ID will be auto-generated. Leave blank.
                                 </div>
                             )}
                             <input type="text" placeholder={quickStudent.personType === 'student' ? 'ID Number *' : 'ID (auto-generated)'}
                                 value={quickStudent.student_id}
                                 onChange={(e) => setQuickStudent(p => ({ ...p, student_id: e.target.value }))}
                                 className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm focus:ring-2 focus:ring-red-500"
-                                required={quickStudent.personType === 'student'} />
+                                required={quickStudent.personType === 'student'}
+                                disabled={quickStudent.personType === 'employee'} />
                             <input type="text" placeholder="Full Name *" value={quickStudent.name}
                                 onChange={(e) => setQuickStudent(p => ({ ...p, name: e.target.value }))}
                                 className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm focus:ring-2 focus:ring-red-500" />
@@ -838,29 +971,29 @@ const CardGeneration = () => {
             {/* Photo Modal */}
             {showPhotoModal && selectedStudent && (
                 <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-                    <div className="bg-white rounded-2xl p-6 max-w-md w-full text-center shadow-2xl">
-                        <div className="w-16 h-16 bg-amber-500 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                    <div className="bg-white rounded-2xl p-6 max-w-md w-full text-center shadow-2xl animate-scale-in">
+                        <div className="w-16 h-16 bg-gradient-to-br from-amber-500 to-orange-600 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg">
                             <i className="pi pi-camera text-white text-2xl"></i>
                         </div>
                         <h3 className="text-xl font-bold text-slate-800">Photo Required</h3>
-                        <p className="text-slate-500 mt-1">{selectedStudent.name} needs a photo before generating card</p>
+                        <p className="text-slate-500 mt-1">{selectedStudent.name} needs a photo</p>
                         {uploadedPhoto && (
-                            <div className="w-24 h-24 mx-auto mt-3 border-2 border-slate-200 rounded-xl overflow-hidden">
+                            <div className="w-24 h-24 mx-auto mt-3 border-2 border-slate-200 rounded-xl overflow-hidden shadow-md">
                                 <img src={URL.createObjectURL(uploadedPhoto)} className="w-full h-full object-cover" alt="Preview" />
                             </div>
                         )}
                         <div className="border-2 border-dashed border-slate-300 rounded-xl p-4 my-4 hover:border-red-300 transition-colors">
                             <input type="file" accept="image/*" className="hidden" id="photo-upload"
                                 onChange={(e) => { if (e.target.files[0]) setUploadedPhoto(e.target.files[0]); }} />
-                            <label htmlFor="photo-upload" className="inline-block bg-slate-100 hover:bg-slate-200 px-4 py-2 rounded-lg cursor-pointer text-slate-700 font-medium">
+                            <label htmlFor="photo-upload" className="inline-block bg-slate-100 hover:bg-slate-200 px-4 py-2 rounded-lg cursor-pointer text-slate-700 font-medium transition-colors">
                                 <i className="pi pi-upload mr-2"></i>Choose Photo
                             </label>
                         </div>
                         <div className="flex gap-3">
                             <button onClick={() => { setShowPhotoModal(false); setUploadedPhoto(null); }}
-                                className="flex-1 py-2.5 border border-slate-300 rounded-xl text-slate-700 font-medium">Cancel</button>
+                                className="flex-1 py-2.5 border border-slate-300 rounded-xl text-slate-700 font-medium hover:bg-slate-50 transition-colors">Cancel</button>
                             <button onClick={handlePhotoUploadOnly} disabled={!uploadedPhoto || photoUploadStatus === 'uploading'}
-                                className="flex-1 bg-gradient-to-r from-red-600 to-red-500 text-white py-2.5 rounded-xl font-medium disabled:opacity-50">
+                                className="flex-1 bg-gradient-to-r from-red-600 to-red-500 text-white py-2.5 rounded-xl font-medium disabled:opacity-50 hover:from-red-700 hover:to-red-600 transition-all">
                                 {photoUploadStatus === 'uploading' ? <><i className="pi pi-spinner pi-spin mr-2"></i>Uploading...</> : 'Save & Generate'}
                             </button>
                         </div>
@@ -872,10 +1005,14 @@ const CardGeneration = () => {
 };
 
 // ===== SUB-COMPONENTS =====
-const StepButton = ({ step, title, active, onClick }) => (
-    <button onClick={onClick} className={`text-center p-3 rounded-xl transition-all ${active ? 'bg-red-50 border-2 border-red-500' : 'border-2 border-transparent hover:bg-slate-50'}`}>
-        <div className={`w-8 h-8 rounded-full flex items-center justify-center mx-auto mb-1 text-sm font-bold ${active ? 'bg-red-600 text-white' : 'bg-slate-200 text-slate-600'}`}>{step}</div>
-        <div className={`text-xs sm:text-sm font-medium ${active ? 'text-red-600' : 'text-slate-600'}`}>{title}</div>
+const StepButton = ({ step, title, icon, active, onClick }) => (
+    <button onClick={onClick} className={`text-center p-3 rounded-xl transition-all duration-300 ${active ? 'bg-red-50 border-2 border-red-500 shadow-lg scale-105' : 'border-2 border-transparent hover:bg-slate-50 hover:scale-105'
+        }`}>
+        <div className={`w-9 h-9 rounded-full flex items-center justify-center mx-auto mb-1.5 text-sm font-bold transition-all ${active ? 'bg-gradient-to-br from-red-600 to-red-500 text-white shadow-lg shadow-red-500/30' : 'bg-slate-200 text-slate-600'
+            }`}>
+            <i className={`pi ${icon} text-xs`}></i>
+        </div>
+        <div className={`text-xs font-semibold ${active ? 'text-red-600' : 'text-slate-600'}`}>{title}</div>
     </button>
 );
 
@@ -883,7 +1020,7 @@ const FileUploadCard = ({ title, accept, icon, color, onFileSelect, note }) => {
     const [file, setFile] = useState(null);
     return (
         <div className="border-2 border-dashed border-slate-300 rounded-xl p-4 text-center hover:border-red-300 transition-colors">
-            <div className={`w-12 h-12 ${color === 'red' ? 'bg-red-600' : 'bg-slate-700'} rounded-xl flex items-center justify-center mx-auto mb-2`}>
+            <div className={`w-12 h-12 ${color === 'red' ? 'bg-gradient-to-br from-red-600 to-red-500' : 'bg-gradient-to-br from-slate-700 to-slate-800'} rounded-xl flex items-center justify-center mx-auto mb-2 shadow-lg`}>
                 <i className={`${icon} text-white text-xl`}></i>
             </div>
             <p className="font-medium text-slate-700">{title}</p>
@@ -893,6 +1030,44 @@ const FileUploadCard = ({ title, accept, icon, color, onFileSelect, note }) => {
                 {file ? file.name : 'Choose File'}
             </label>
             {note && <p className="text-xs text-slate-400 mt-1">{note}</p>}
+        </div>
+    );
+};
+
+// ===== DRAGGABLE ITEM COMPONENT =====
+const DraggableItem = ({ id, displayX, displayY, label, isPhotoField, isActive, hasStudent }) => {
+    const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id });
+
+    const style = {
+        position: 'absolute',
+        left: `${displayX}px`,
+        top: `${displayY}px`,
+        transform: transform ? `translate(${transform.x}px, ${transform.y}px)` : undefined,
+        zIndex: isDragging ? 100 : 10,
+    };
+
+    return (
+        <div
+            ref={setNodeRef}
+            style={style}
+            {...listeners}
+            {...attributes}
+            className={`cursor-grab active:cursor-grabbing select-none ${isDragging ? 'scale-110' : 'hover:scale-105'} transition-transform duration-150`}
+        >
+            <div className={`px-3 py-1.5 rounded-xl text-xs font-bold shadow-2xl border-2 backdrop-blur-sm whitespace-nowrap max-w-[200px] truncate ${isDragging
+                ? 'bg-gradient-to-r from-red-600 to-red-500 text-white border-red-300 shadow-red-500/50'
+                : isPhotoField
+                    ? 'bg-gradient-to-r from-purple-600 to-purple-500 text-white border-purple-400 shadow-purple-500/30'
+                    : hasStudent
+                        ? 'bg-white/95 text-slate-800 border-green-300 shadow-green-500/20'
+                        : 'bg-white/80 text-slate-500 border-slate-300 shadow-slate-500/20 hover:border-red-300'
+                }`}>
+                {label}
+                {isDragging && <span className="ml-2 text-[10px] opacity-80 animate-pulse">moving...</span>}
+                {hasStudent && !isDragging && !isPhotoField && (
+                    <span className="ml-1 text-[9px] opacity-50">✓</span>
+                )}
+            </div>
         </div>
     );
 };
