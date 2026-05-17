@@ -137,6 +137,7 @@ router.post('/register/step1/personal', async (req, res) => {
             });
         }
 
+        // ✅ Store plain password (will be hashed by User model when created)
         const progress = await RegistrationProgress.findOneAndUpdate(
             { email: email.toLowerCase() },
             {
@@ -145,7 +146,7 @@ router.post('/register/step1/personal', async (req, res) => {
                     firstName,
                     lastName,
                     phoneNumber,
-                    password: await bcrypt.hash(password, 10)
+                    password: password  // Plain password, not hashed!
                 }
             },
             { upsert: true, new: true }
@@ -165,33 +166,31 @@ router.post('/register/step1/personal', async (req, res) => {
 });
 
 // STEP 2: Company Info - CREATE USER FIRST, THEN COMPANY
+// STEP 2: Company Info - FIXED (Create user first, then company)
 router.post('/register/step2/company',
     upload.single('logo'),
     async (req, res) => {
         try {
-            console.log('📥 Step 2 - req.body:', req.body);
-            console.log('📥 Step 2 - req.file:', req.file);
+            console.log('📥 Step 2 - Starting...');
 
-            // Handle email that might come as array
-            let rawEmail = req.body.email;
-            if (Array.isArray(rawEmail)) rawEmail = rawEmail[0];
-            const email = String(rawEmail || req.body.regEmail || '').toLowerCase();
+            // Extract email - handle both formats
+            let email = req.body.email;
+            if (Array.isArray(email)) email = email[0];
+            if (!email && req.body.regEmail) email = req.body.regEmail;
+            email = String(email).toLowerCase();
 
             const companyName = req.body.name || req.body.companyName;
             const companyPhone = req.body.phone || req.body.companyPhone;
-            const companyEmail = req.body.companyEmail || req.body.email || email;
-            const finalCompanyEmail = Array.isArray(companyEmail) ? companyEmail[0] : companyEmail;
-            const companyWebsite = req.body.website || '';
-            const province = req.body.province || '';
-            const district = req.body.district || '';
-            const sector = req.body.sector || '';
-            const country = req.body.country || 'Rwanda';
+            const companyEmail = req.body.companyEmail || email;
 
-            if (!email) {
-                return res.status(400).json({ success: false, error: 'Email is required' });
-            }
-            if (!companyName || !companyPhone || !finalCompanyEmail) {
-                return res.status(400).json({ success: false, error: 'Company name, phone, and email are required' });
+            console.log(`📝 Processing registration for: ${email}`);
+            console.log(`🏢 Company: ${companyName}`);
+
+            if (!email || !companyName || !companyPhone || !companyEmail) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'Email, company name, phone, and email are required'
+                });
             }
 
             // Get personal data from progress
@@ -222,14 +221,13 @@ router.post('/register/step2/company',
                 try {
                     const base64Image = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
                     logoData = await uploadCompanyLogo(base64Image, `company_${Date.now()}`);
-                    console.log('✅ Logo uploaded:', logoData.url);
+                    console.log('✅ Logo uploaded');
                 } catch (uploadError) {
                     console.error('Logo upload error:', uploadError);
                 }
             }
 
-            // ========== 1️⃣ CREATE USER FIRST ==========
-            const cleanPhone = cleanPhoneNumber(personal.phoneNumber);
+            // ✅ Generate username
             const baseUsername = `${personal.firstName.toLowerCase()}.${personal.lastName.toLowerCase()}`;
             let username = baseUsername;
             let counter = 1;
@@ -238,51 +236,45 @@ router.post('/register/step2/company',
                 counter++;
             }
 
-            let user = await User.findOne({ email });
+            // ✅ Clean phone number
+            const cleanPhone = personal.phoneNumber?.replace(/\D/g, '') || '';
 
-            if (user) {
-                // Update existing user from previous attempt
-                user.firstName = personal.firstName;
-                user.lastName = personal.lastName;
-                user.phoneNumber = cleanPhone;
-                user.password = personal.password;
-                user.role = 'admin';
-                user.metadata.registrationStep = 2;
-                user.metadata.registrationCompleted = false;
-                await user.save();
-                console.log('✅ User updated:', user.email);
-            } else {
-                // Create new user
-                user = await User.create({
-                    firstName: personal.firstName,
-                    lastName: personal.lastName,
-                    username,
-                    email,
-                    phoneNumber: cleanPhone,
-                    password: personal.password,
-                    role: 'admin',
-                    companyId: null, // Will update after company creation
-                    avatar: {
-                        initials: `${personal.firstName[0]}${personal.lastName[0]}`.toUpperCase()
-                    },
-                    metadata: {
-                        registrationStep: 2,
-                        registrationCompleted: false
-                    },
-                    isEmailVerified: false,
-                    isActive: true
-                });
-                console.log('✅ User created:', user.email);
-            }
+            // ========== 1️⃣ CREATE USER FIRST ==========
+            const user = await User.create({
+                firstName: personal.firstName,
+                lastName: personal.lastName,
+                username,
+                email,
+                phoneNumber: cleanPhone,
+                password: personal.password,  // Plain password - will be hashed by model
+                role: 'admin',
+                companyId: null,  // Will update after company creation
+                avatar: {
+                    initials: `${personal.firstName[0]}${personal.lastName[0]}`.toUpperCase()
+                },
+                metadata: {
+                    registrationStep: 2,
+                    registrationCompleted: false
+                },
+                isEmailVerified: false,
+                isActive: true
+            });
+            console.log('✅ User created:', user.email, 'ID:', user._id);
 
             // ========== 2️⃣ CREATE COMPANY WITH USER ID ==========
             const company = await Company.create({
                 name: companyName,
                 phone: companyPhone,
-                email: finalCompanyEmail,
-                website: companyWebsite,
-                address: { province, district, sector, country },
-                logo: logoData || {},
+                email: companyEmail.toLowerCase(),
+                website: req.body.website || '',
+                address: {
+                    province: req.body.province || '',
+                    district: req.body.district || '',
+                    sector: req.body.sector || '',
+                    country: req.body.country || 'Rwanda'
+                },
+                logo: logoData,
+                adminId: user._id,  // ✅ Now we have the user ID!
                 license: {
                     key: null,
                     status: 'pending',
@@ -291,52 +283,52 @@ router.post('/register/step2/company',
                     maxOrganizations: 10,
                     maxCardsPerMonth: 5000
                 },
-                adminId: user._id,
                 isActive: false
             });
-            console.log('✅ Company created (pending):', company.name);
+            console.log('✅ Company created:', company._id);
 
             // ========== 3️⃣ UPDATE USER WITH COMPANY ID ==========
             user.companyId = company._id;
             await user.save();
             console.log('✅ User linked to company');
 
-            // ========== 4️⃣ SEND ALERT TO SUPER ADMINS ==========
-            try {
-                await sendNewRegistrationAlert(company, user);
-
-                // 🔥 EMIT REAL-TIME NOTIFICATION TO SUPER ADMINS
-                try {
-                    const socketService = require('../services/socketService');
-                    socketService.emitToRole('super_admin', 'company:new-registration', {
-                        companyName: company.name,
-                        adminName: `${user.firstName} ${user.lastName}`,
-                        adminEmail: user.email,
-                        companyPhone: company.phone,
-                        companyId: company._id,
-                        timestamp: new Date().toISOString()
-                    });
-                    console.log('📡 Real-time alert sent to super admins');
-                } catch (socketErr) {
-                    console.error('Socket emission failed:', socketErr);
-                }
-
-                
-            } catch (alertErr) {
-                console.error('Admin alert failed:', alertErr);
-            }
-
-            // ========== 5️⃣ UPDATE REGISTRATION PROGRESS ==========
+            // ========== 4️⃣ UPDATE PROGRESS ==========
             progress.step = 3;
             progress.data.company = {
                 name: companyName,
                 phone: companyPhone,
-                email: finalCompanyEmail,
-                website: companyWebsite,
-                address: { province, district, sector, country },
+                email: companyEmail,
+                website: req.body.website || '',
+                address: {
+                    province: req.body.province || '',
+                    district: req.body.district || '',
+                    sector: req.body.sector || '',
+                    country: req.body.country || 'Rwanda'
+                },
                 logo: logoData
             };
             await progress.save();
+
+            // ========== 5️⃣ SEND ALERT TO SUPER ADMINS ==========
+            sendNewRegistrationAlert(company, user).catch(err => {
+                console.error('Admin alert failed:', err);
+            });
+
+            // 🔥 EMIT REAL-TIME NOTIFICATION TO SUPER ADMINS
+            try {
+                const socketService = require('../services/socketService');
+                socketService.emitToRole('super_admin', 'company:new-registration', {
+                    companyName: company.name,
+                    adminName: `${user.firstName} ${user.lastName}`,
+                    adminEmail: user.email,
+                    companyPhone: company.phone,
+                    companyId: company._id,
+                    timestamp: new Date().toISOString()
+                });
+                console.log('📡 Real-time alert sent to super admins');
+            } catch (socketErr) {
+                console.error('Socket emission failed:', socketErr);
+            }
 
             res.json({
                 success: true,
@@ -348,7 +340,16 @@ router.post('/register/step2/company',
             });
 
         } catch (error) {
-            console.error('Step 2 error:', error);
+            console.error('❌ Step 2 error:', error);
+
+            // Clean up if something failed
+            if (error.code === 11000) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'Email or company name already exists'
+                });
+            }
+
             res.status(500).json({
                 success: false,
                 error: error.message || 'Failed to save company info'

@@ -71,34 +71,103 @@ const CardGeneration = () => {
     );
 
     // ==================== LOAD DATA ====================
-    useEffect(() => { loadOrganizations(); loadTemplates(); }, []);
-    useEffect(() => { if (selectedOrgId) { loadOrgStudents(); } }, [selectedOrgId]);
-    useEffect(() => { if (selectedTemplateId) { loadTemplateDimensions(); } }, [selectedTemplateId]);
+    // Initial load
+    useEffect(() => {
+        loadOrganizations();
+    }, []);
 
+    // Load templates when organization changes
+    useEffect(() => {
+        if (selectedOrgId) {
+            loadTemplates(selectedOrgId);
+        }
+    }, [selectedOrgId]);
+
+    // Load template dimensions when template changes
+    useEffect(() => {
+        if (selectedTemplateId) {
+            loadTemplateDimensions();
+        }
+    }, [selectedTemplateId]);
     const loadOrganizations = async () => {
         try {
             const response = await cardAPI.getOrganizations();
-            if (response.success) setOrganizations(response.organizations || []);
-        } catch (error) { console.error('Failed to load organizations:', error); }
+            console.log('Organizations response:', response);
+
+            if (response.success) {
+                const orgs = response.organizations || [];
+                setOrganizations(orgs);
+
+                // Auto-select first organization if none selected
+                if (orgs.length > 0 && !selectedOrgId) {
+                    setSelectedOrgId(orgs[0]._id);
+                }
+            } else {
+                console.error('Failed to load organizations:', response.error);
+                setOrganizations([]);
+            }
+        } catch (error) {
+            console.error('Failed to load organizations:', error);
+            setOrganizations([]);
+        }
     };
 
     const loadOrgStudents = async () => {
+        if (!selectedOrgId) {
+            console.log('No organization selected, skipping student load');
+            setStudents([]);
+            return;
+        }
+
         try {
+            console.log(`Loading students for org: ${selectedOrgId}`);
             const response = await cardAPI.getOrgStudents(selectedOrgId, { limit: 500 });
-            if (response.success) setStudents(response.students || []);
-        } catch (error) { console.error('Failed to load students:', error); }
+            console.log('Students response:', response);
+
+            if (response.success) {
+                setStudents(response.students || []);
+
+                // Extract filter options from response if available
+                if (response.filterOptions) {
+                    setFilterOptions(response.filterOptions);
+                }
+            } else {
+                console.error('Failed to load students:', response.error);
+                setStudents([]);
+            }
+        } catch (error) {
+            console.error('Failed to load students:', error);
+            setStudents([]);
+        }
     };
 
-    const loadTemplates = async () => {
+    const loadTemplates = async (orgId = selectedOrgId) => {
+        if (!orgId) {
+            setTemplates([]);
+            return;
+        }
+
         try {
-            const params = selectedOrgId ? { organizationId: selectedOrgId } : {};
+            const params = { organizationId: orgId };
             const response = await templateAPI.getTemplates(params);
+            console.log('Templates response:', response);
+
             if (response.success) {
                 setTemplates(response.templates || []);
                 const defaultTemplate = response.templates.find(t => t.isDefault);
-                if (defaultTemplate) setSelectedTemplateId(defaultTemplate._id);
+                if (defaultTemplate) {
+                    setSelectedTemplateId(defaultTemplate._id);
+                } else if (response.templates.length > 0) {
+                    setSelectedTemplateId(response.templates[0]._id);
+                }
+            } else {
+                console.error('Failed to load templates:', response.error);
+                setTemplates([]);
             }
-        } catch (error) { console.error('Failed to load templates:', error); }
+        } catch (error) {
+            console.error('Failed to load templates:', error);
+            setTemplates([]);
+        }
     };
 
     const loadTemplateDimensions = async () => {
@@ -184,11 +253,25 @@ const CardGeneration = () => {
     });
 
     // ==================== HANDLERS ====================
+
     const handleOrgChange = async (orgId) => {
+        console.log(`Organization changed to: ${orgId}`);
         setSelectedOrgId(orgId);
         setSelectedStudent(null);
         setPersonFilter('all');
-        if (orgId) { await loadOrgStudents(); await loadTemplates(); }
+        setSearchTerm('');
+        setStudents([]);
+
+        // Clear previous batch filters
+        setBatchFilters({ class: '', level: '', academic_year: '' });
+
+        // Load templates for this organization
+        if (orgId) {
+            await loadTemplates(orgId);
+        } else {
+            setTemplates([]);
+            setSelectedTemplateId('');
+        }
     };
 
     const handleSingleStudentSelect = (studentId) => {
@@ -343,8 +426,11 @@ const CardGeneration = () => {
                             <label className="block text-sm font-medium text-slate-700 mb-2">
                                 Select Organization <span className="text-red-500">*</span>
                             </label>
-                            <select value={selectedOrgId} onChange={(e) => handleOrgChange(e.target.value)}
-                                className="w-full px-4 py-3 bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-red-500 transition-all text-slate-700">
+                            <select
+                                value={selectedOrgId || ''}
+                                onChange={(e) => handleOrgChange(e.target.value)}
+                                className="w-full px-4 py-3 bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-red-500 transition-all text-slate-700"
+                            >
                                 <option value="">Choose an organization...</option>
                                 {organizations.map(org => (
                                     <option key={org._id} value={org._id}>
