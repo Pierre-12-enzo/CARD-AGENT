@@ -38,7 +38,7 @@ const getApiBaseUrl = () => {
 
   // 3. Fallback (should never hit in production if env vars are set)
   console.warn('⚠️ No VITE_API_URL found, using default fallback');
-  return 'https://card-agent-backend.onrender.com/api';
+  return 'https://card-agent-256t.onrender.com/api';
 };
 
 const API_BASE_URL = getApiBaseUrl();

@@ -11,14 +11,14 @@ const getSocketUrl = () => {
         window.location.hostname === '127.0.0.1';
 
     if (isDevelopment) {
-        console.log('🔌 Development mode - using localhost');
+        console.log('🔌 Development mode - using localhost mode');
         return 'http://localhost:5000';
     }
 
     // 2. For production, use environment variable
     const apiUrl = import.meta.env.VITE_API_URL;
     if (apiUrl) {
-        // Convert https://backend.onrender.com/api to https://backend.onrender.com
+        // Convert https://card-agent-256t.onrender.com/api to https://card-agent-256t.onrender.com
         const socketUrl = apiUrl.replace(/\/api$/, '');
         console.log('🔌 Production mode - using:', socketUrl);
         return socketUrl;
