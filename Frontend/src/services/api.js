@@ -21,25 +21,30 @@ class APICache {
   clear() { this.cache.clear(); }
 }
 
-// Environment detection - FIXED VERSION
+// Environment detection - FIXED ORDER
 const getApiBaseUrl = () => {
-  // Use environment variable if set (production)
+  // 1. Check if we're in development mode FIRST
+  const isDevelopment = window.location.hostname === 'localhost' ||
+    window.location.hostname === '127.0.0.1';
+
+  if (isDevelopment) {
+    return 'http://localhost:5000/api';
+  }
+
+  // 2. For production, use environment variable if available
   if (import.meta.env.VITE_API_URL) {
     return import.meta.env.VITE_API_URL;
   }
 
-  // Development
-  if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-    return 'http://localhost:5000/api';
-  }
-
-  // Production fallback
-  return 'https://card-agent-backend.fly.dev/api';
+  // 3. Fallback (should never hit in production if env vars are set)
+  console.warn('⚠️ No VITE_API_URL found, using default fallback');
+  return 'https://card-agent-backend.onrender.com/api';
 };
 
 const API_BASE_URL = getApiBaseUrl();
 
 console.log('🚀 CARD-AGENT API:', API_BASE_URL);
+console.log('📍 Environment:', window.location.hostname);
 
 // Axios instance
 const api = axios.create({
@@ -162,19 +167,16 @@ export const authAPI = {
 // COMPANY API
 // ============================================
 export const companyAPI = {
-  // Get current user's company
   getMyCompany: async () => {
     const response = await api.get('/company/me');
     return response.data;
   },
 
-  // Get company by ID
   getCompany: async (id) => {
     const response = await api.get(`/company/${id}`);
     return response.data;
   },
 
-  // Update company profile
   updateProfile: async (formData) => {
     const response = await api.put('/company/profile', formData, {
       headers: { 'Content-Type': 'multipart/form-data' }
@@ -182,19 +184,16 @@ export const companyAPI = {
     return response.data;
   },
 
-  // Get dashboard stats
   getDashboard: async () => {
     const response = await api.get('/company/dashboard');
     return response.data;
   },
 
-  // Get organizations for current company
   getOrganizations: async (params = {}) => {
     const response = await api.get('/company/organizations', { params });
     return response.data;
   },
 
-  // SUPER ADMIN ONLY
   getAllCompanies: async (params = {}) => {
     const response = await api.get('/company', { params });
     return response.data;
@@ -217,7 +216,7 @@ export const companyAPI = {
 };
 
 // ============================================
-// ORGANIZATIONS API (Schools/Clients)
+// ORGANIZATIONS API
 // ============================================
 export const organizationAPI = {
   getAll: async (params = {}) => {
@@ -250,31 +249,26 @@ export const organizationAPI = {
 // STUDENT API
 // ============================================
 export const studentAPI = {
-  // Grouped by organization (dashboard cards)
   getGroupedByOrganization: async () => {
     const response = await api.get('/students/grouped-by-organization');
     return response.data;
   },
 
-  // Get students for specific organization
   getByOrganization: async (orgId, params = {}) => {
     const response = await api.get(`/students/organization/${orgId}`, { params });
     return response.data;
   },
 
-  // Get filter options for organization
   getFilterOptions: async (orgId) => {
     const response = await api.get(`/students/organization/${orgId}/filter-options`);
     return response.data;
   },
 
-  // Get all students
   getAll: async (params = {}) => {
     const response = await api.get('/students', { params });
     return response.data;
   },
 
-  // Create student
   create: async (formData) => {
     const response = await api.post('/students', formData, {
       headers: formData instanceof FormData ? { 'Content-Type': 'multipart/form-data' } : {}
@@ -282,25 +276,21 @@ export const studentAPI = {
     return response.data;
   },
 
-  // Update student
   update: async (id, formData) => {
     const config = formData instanceof FormData ? { headers: { 'Content-Type': 'multipart/form-data' } } : {};
     const response = await api.put(`/students/${id}`, formData, config);
     return response.data;
   },
 
-  // Delete student
   delete: async (id) => {
     const response = await api.delete(`/students/${id}`);
     return response.data;
   },
 
-  // Get student photo URL
   getPhotoUrl: (studentId, size = 'medium') => {
     return `${API_BASE_URL}/students/photo/${studentId}?size=${size}`;
   },
 
-  // Bulk import CSV
   bulkImportCSV: async (organizationId, csvFile) => {
     const formData = new FormData();
     formData.append('csv', csvFile);
@@ -312,7 +302,6 @@ export const studentAPI = {
     return response.data;
   },
 
-  // Bulk import with photos
   bulkImportWithPhotos: async (organizationId, csvFile, photoZipFile) => {
     const formData = new FormData();
     formData.append('csv', csvFile);
@@ -325,7 +314,6 @@ export const studentAPI = {
     return response.data;
   },
 
-  // Delete all students for an organization
   deleteAll: async (organizationId) => {
     const response = await api.delete('/students/delete-all', {
       params: { organizationId }
@@ -333,7 +321,6 @@ export const studentAPI = {
     return response.data;
   },
 
-  // Get stats
   getStats: async (params = {}) => {
     const response = await api.get('/students/stats', { params });
     return response.data;
@@ -344,19 +331,16 @@ export const studentAPI = {
 // CARD API
 // ============================================
 export const cardAPI = {
-  // Get organizations for card generation
   getOrganizations: async () => {
     const response = await api.get('/card/organizations');
     return response.data;
   },
 
-  // Get students for card generation in an org
   getOrgStudents: async (orgId, params = {}) => {
     const response = await api.get(`/card/organization/${orgId}/students`, { params });
     return response.data;
   },
 
-  // Generate single card
   generateSingle: async (data) => {
     const response = await api.post('/card/generate-single-card', data, {
       responseType: 'blob'
@@ -364,7 +348,6 @@ export const cardAPI = {
     return response.data;
   },
 
-  // Batch process CSV + optional photos
   processCSVAndGenerate: async (formData) => {
     const response = await api.post('/card/process-csv-generate', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
@@ -374,19 +357,16 @@ export const cardAPI = {
     return response.data;
   },
 
-  // Get batch progress
   getBatchProgress: async (batchId) => {
     const response = await api.get(`/card/batch-progress/${batchId}`);
     return response.data;
   },
 
-  // Get template dimensions
   getTemplateDimensions: async (templateId) => {
     const response = await api.get(`/card/template-dimensions/${templateId}`);
     return response.data;
   },
 
-  // Upload student photo
   uploadStudentPhoto: async (formData) => {
     const response = await api.post('/card/upload-student-photo', formData, {
       headers: { 'Content-Type': 'multipart/form-data' }
@@ -394,13 +374,11 @@ export const cardAPI = {
     return response.data;
   },
 
-  // Get card history
   getCardHistory: async (params = {}) => {
     const response = await api.get('/card/history', { params });
     return response.data;
   },
 
-  // Get student card history
   getStudentCardHistory: async (studentId) => {
     const response = await api.get(`/card/history/student/${studentId}`);
     return response.data;

@@ -1,13 +1,13 @@
-// server.js - WITH SOCKET.IO ADDED
+// server.js - MODIFIED FOR RENDER DEPLOYMENT
 require("dotenv").config();
 const express = require('express');
-const http = require('http'); // ✅ ADD THIS - For creating HTTP server
-const socketIo = require('socket.io'); // ✅ ADD THIS
+const http = require('http');
+const socketIo = require('socket.io');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const path = require('path');
-const jwt = require('jsonwebtoken'); // ✅ ADD THIS - For socket auth
-const User = require('./models/User'); // ✅ ADD THIS - For socket auth
+const jwt = require('jsonwebtoken');
+const User = require('./models/User');
 const globalAudit = require('./middleware/globalAudit');
 const AuditService = require('./services/auditService');
 
@@ -20,12 +20,13 @@ const io = socketIo(server, {
     origin: function (origin, callback) {
       const allowedOrigins = [
         'http://localhost:5173',
-        'https://card-agent-virid.vercel.app',  // ✅ Add your Vercel domain
-
+        'https://card-agent-virid.vercel.app',
+        // Add your custom domain if any
       ];
       if (!origin || allowedOrigins.indexOf(origin) !== -1) {
         callback(null, true);
       } else {
+        console.warn(`⚠️ Blocked Socket.io CORS from: ${origin}`);
         callback(new Error('Not allowed by CORS'));
       }
     },
@@ -34,13 +35,15 @@ const io = socketIo(server, {
   },
   transports: ['websocket', 'polling'],
   pingTimeout: 60000,
-  pingInterval: 25000
+  pingInterval: 25000,
+  allowEIO3: true
 });
 
-// Make io accessible to routes and middleware
+// Make io accessible
 app.set('io', io);
+global.io = io;
 
-// ==================== SOCKET.IO AUTHENTICATION MIDDLEWARE ====================
+// ==================== SOCKET.IO AUTHENTICATION ====================
 io.use(async (socket, next) => {
   try {
     const token = socket.handshake.auth.token;
@@ -56,7 +59,6 @@ io.use(async (socket, next) => {
       return next(new Error('User not found or inactive'));
     }
 
-    // Attach user to socket
     socket.user = {
       id: user._id,
       firstName: user.firstName,
@@ -73,21 +75,14 @@ io.use(async (socket, next) => {
   }
 });
 
-// In server.js, after io.use
-io.engine.on('connection_error', (err) => {
-  console.log('❌ Socket connection error:', err.message);
-  console.log('Request:', err.req);
-});
-
-// ==================== INITIALIZE SOCKET SERVICE ====================
+// Socket service
 const socketService = require('./services/socketService');
 socketService.init(io);
 
-// ==================== SOCKET.IO CONNECTION HANDLER ====================
+// Socket connection handler
 io.on('connection', (socket) => {
   console.log(`🔌 Connected: ${socket.user?.email} (${socket.user?.role})`);
 
-  // Track user
   socketService.trackUser(socket.id, {
     id: socket.user.id,
     email: socket.user.email,
@@ -95,7 +90,6 @@ io.on('connection', (socket) => {
     companyId: socket.user.companyId
   });
 
-  // Join rooms
   socket.join(`user_${socket.user.id}`);
   socket.join(`role_${socket.user.role}`);
 
@@ -103,18 +97,6 @@ io.on('connection', (socket) => {
     socket.join(`company_${socket.user.companyId}`);
   }
 
-  // If co-worker, join their permitted organization rooms
-  if (socket.user.role === 'co_worker') {
-    User.findById(socket.user.id).select('permissions').then(user => {
-      if (user?.permissions) {
-        user.permissions.forEach(perm => {
-          socket.join(`org_${perm.organizationId}`);
-        });
-      }
-    }).catch(err => console.error('Error joining org rooms:', err));
-  }
-
-  // Handle subscription to specific events
   socket.on('subscribe:student', (orgId) => {
     if (orgId) socket.join(`org_${orgId}`);
   });
@@ -131,7 +113,6 @@ io.on('connection', (socket) => {
     if (batchId) socket.leave(`batch_${batchId}`);
   });
 
-  // Handle ping/pong
   socket.on('ping', () => {
     socket.emit('pong', {
       timestamp: Date.now(),
@@ -139,31 +120,18 @@ io.on('connection', (socket) => {
     });
   });
 
-  // Handle disconnection
   socket.on('disconnect', () => {
     console.log(`🔌 Disconnected: ${socket.user?.email}`);
     socketService.untrackUser(socket.id);
   });
 });
 
-// ==================== EXPORT IO FOR USE IN OTHER FILES ====================
-
-// ✅ Store io in app locals instead of exporting directly
-app.set('io', io);
-
-// ✅ Also make it available globally for models
-global.io = io;
-
-// Then export
 module.exports = { app, server, io };
-
 
 // ==================== CORS CONFIGURATION ====================
 const allowedOrigins = [
-  //'https://cap-mis.vercel.app',
   'http://localhost:5173',
-  'https://card-agent-virid.vercel.app',  // ✅ Add your Vercel domain
-
+  'https://card-agent-virid.vercel.app',
 ];
 
 const corsOptions = {
@@ -191,9 +159,7 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-
-// Handle preflight requests
-//app.options('/*', cors(corsOptions));
+//app.options('*', cors(corsOptions));
 
 // ==================== MIDDLEWARE ====================
 app.use(express.json({ limit: '50mb' }));
@@ -214,10 +180,9 @@ app.use((req, res, next) => {
   next();
 });
 
-// ✅ GLOBAL AUTHENTICATION MIDDLEWARE
+// ==================== AUTHENTICATION ====================
 const authMiddleware = require('./middleware/authMiddleware');
 
-// Public paths that don't need authentication
 const publicPaths = [
   '/api/auth/login',
   '/api/auth/register',
@@ -230,19 +195,15 @@ const publicPaths = [
 
 app.use(async (req, res, next) => {
   const isPublicPath = publicPaths.some(path => req.path.startsWith(path));
-
   if (isPublicPath) {
     return next();
   }
-
-  // Apply auth for protected routes
   return authMiddleware(req, res, next);
 });
 
-// ✅ AUDIT MIDDLEWARE (Now req.user will be available)
 app.use(globalAudit);
 
-// API Routes
+// ==================== API ROUTES ====================
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/card', require('./routes/card'));
 app.use('/api/students', require('./routes/student'));
@@ -251,6 +212,7 @@ app.use('/api/co-workers', require('./routes/co-worker.js'));
 app.use('/api/audit', require('./routes/audit'));
 app.use('/api/company', require('./routes/company'));
 app.use('/api/organizations', require('./routes/school'));
+
 // ==================== MONGOOSE CONNECTION ====================
 const uri = process.env.MONGO_URI;
 
@@ -265,28 +227,12 @@ mongoose.connect(uri, {
   retryWrites: true,
   retryReads: true,
 })
-  .then(() => console.log('✅ MongoDB → CAP_mis connected successfully'))
+  .then(() => console.log('✅ MongoDB connected successfully'))
   .catch(e => {
     console.error('❌ MongoDB connection error:', e.message);
-    console.log('📌 Please check:');
-    console.log('   1. Is MongoDB Atlas cluster running?');
-    console.log('   2. Is IP whitelisted in Atlas?');
-    console.log('   3. Are credentials correct in .env?');
   });
 
-mongoose.connection.on('connected', () => {
-  console.log('📊 MongoDB connection established');
-});
-
-mongoose.connection.on('error', (err) => {
-  console.error('❌ MongoDB connection error:', err);
-});
-
-mongoose.connection.on('disconnected', () => {
-  console.log('⚠️ MongoDB disconnected');
-});
-
-// ==================== ROUTES ====================
+// ==================== HEALTH CHECK (IMPORTANT FOR RENDER KEEP-ALIVE) ====================
 app.get('/api/health', (req, res) => {
   res.status(200).json({
     status: 'healthy',
@@ -302,19 +248,9 @@ app.get('/', (req, res) => {
   res.json({
     message: 'CAP_mis Backend API',
     version: '1.0.0',
-    status: 'operational',
-    socketio: true,
-    endpoints: [
-      '/api/auth',
-      '/api/card',
-      '/api/students',
-      '/api/templates',
-      '/api/analytics',
-      '/api/audit'
-    ]
+    status: 'operational'
   });
 });
-
 
 // ==================== ERROR HANDLING ====================
 app.use((req, res, next) => {
@@ -331,64 +267,36 @@ app.use((err, req, res, next) => {
   if (err.message === 'Not allowed by CORS') {
     return res.status(403).json({
       success: false,
-      error: 'Cross-origin request blocked',
-      message: 'Your origin is not allowed to access this API'
+      error: 'Cross-origin request blocked'
     });
   }
 
   const statusCode = err.statusCode || 500;
   res.status(statusCode).json({
     success: false,
-    error: err.message || 'Internal server error',
-    ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
+    error: err.message || 'Internal server error'
   });
 });
 
-
-// ==================== SERVER START (using server variable, not app.listen) ====================
+// ==================== SERVER START ====================
 const PORT = process.env.PORT || 5000;
 
-// ✅ IMPORTANT: Use server.listen instead of app.listen
 server.listen(PORT, () => {
   console.log('='.repeat(50));
-  console.log(`🚀 CAP_mis Backend Server`);
+  console.log(`🚀 CAP_mis Backend Server running on Render`);
   console.log(`📡 Port: ${PORT}`);
   console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`✅ CORS Allowed Origins: ${allowedOrigins.join(', ')}`);
-  console.log(`🔌 Socket.io: Enabled and ready`);
+  console.log(`✅ CORS Allowed: ${allowedOrigins.join(', ')}`);
+  console.log(`🔌 Socket.io: Enabled`);
   console.log('='.repeat(50));
-
-  console.log('📝 Configuration:');
-  console.log(`   - MongoDB: ${process.env.MONGO_URI ? 'Configured' : 'Missing'}`);
-  console.log(`   - Cloudinary: ${process.env.CLOUDINARY_CLOUD_NAME ? 'Configured' : 'Missing'}`);
-  console.log(`   - Socket.io: Real-time audit events enabled`);
 });
 
-// ==================== GRACEFUL SHUTDOWN ====================
+// Graceful shutdown
 process.on('SIGTERM', () => {
-  console.log('SIGTERM received. Shutting down gracefully...');
-  //CronManager.stopAll();
+  console.log('SIGTERM received. Shutting down...');
   io.close(() => {
-    console.log('Socket.io closed');
     server.close(() => {
-      console.log('HTTP server closed');
       mongoose.connection.close(() => {
-        console.log('MongoDB connection closed');
-        process.exit(0);
-      });
-    });
-  });
-});
-
-process.on('SIGINT', () => {
-  console.log('SIGINT received. Shutting down gracefully...');
-  //CronManager.stopAll();
-  io.close(() => {
-    console.log('Socket.io closed');
-    server.close(() => {
-      console.log('HTTP server closed');
-      mongoose.connection.close(() => {
-        console.log('MongoDB connection closed');
         process.exit(0);
       });
     });

@@ -1,4 +1,4 @@
-// services/socket.js - FIXED VERSION
+// services/socket.js - FIXED FOR DEVELOPMENT
 import { io } from 'socket.io-client';
 
 let socket = null;
@@ -6,14 +6,27 @@ let currentToken = null;
 
 // Get the backend URL based on environment
 const getSocketUrl = () => {
-    // Development
-    if (window.location.hostname === 'localhost' ||
-        window.location.hostname === '127.0.0.1') {
-        return 'http://localhost:5000'; // Backend port
+    // 1. Check if we're in development mode FIRST
+    const isDevelopment = window.location.hostname === 'localhost' ||
+        window.location.hostname === '127.0.0.1';
+
+    if (isDevelopment) {
+        console.log('🔌 Development mode - using localhost');
+        return 'http://localhost:5000';
     }
-    // Production
-    // Production - USE YOUR BACKEND URL, NOT window.location.origin
-    return import.meta.env.VITE_API_URL;
+
+    // 2. For production, use environment variable
+    const apiUrl = import.meta.env.VITE_API_URL;
+    if (apiUrl) {
+        // Convert https://backend.onrender.com/api to https://backend.onrender.com
+        const socketUrl = apiUrl.replace(/\/api$/, '');
+        console.log('🔌 Production mode - using:', socketUrl);
+        return socketUrl;
+    }
+
+    // 3. Fallback (should never hit in production if env vars are set)
+    console.warn('⚠️ No VITE_API_URL found, using fallback');
+    return 'https://card-agent-backend.onrender.com';
 };
 
 const SOCKET_URL = getSocketUrl();
@@ -21,13 +34,11 @@ console.log('🔌 Socket URL:', SOCKET_URL);
 
 // Initialize socket with authentication token
 export const initializeSocket = (token) => {
-    // Don't reinitialize if already connected with same token
     if (socket && socket.connected && currentToken === token) {
         console.log('✅ Socket already connected, ID:', socket.id);
         return socket;
     }
 
-    // Disconnect existing socket if any
     if (socket) {
         console.log('🔄 Disconnecting existing socket...');
         socket.disconnect();
@@ -41,7 +52,6 @@ export const initializeSocket = (token) => {
 
     console.log('🔌 Initializing socket connection with token...');
 
-    // ✅ FIXED: Only use auth, not query
     socket = io(SOCKET_URL, {
         transports: ['websocket', 'polling'],
         reconnection: true,
@@ -58,7 +68,6 @@ export const initializeSocket = (token) => {
 
     currentToken = token;
 
-    // Socket event listeners
     socket.on('connect', () => {
         console.log('✅ Socket connected successfully! ID:', socket.id);
         console.log('📡 Transport:', socket.io.engine.transport.name);
@@ -66,9 +75,6 @@ export const initializeSocket = (token) => {
 
     socket.on('connect_error', (error) => {
         console.error('❌ Socket connection error:', error.message);
-        console.log('📡 Will retry with polling if needed...');
-
-        // Fallback to polling if websocket fails
         if (socket.io.engine.transport.name === 'websocket') {
             console.log('🔄 Falling back to polling...');
         }
@@ -77,7 +83,6 @@ export const initializeSocket = (token) => {
     socket.on('disconnect', (reason) => {
         console.log('🔌 Socket disconnected:', reason);
         if (reason === 'io server disconnect') {
-            // Server initiated disconnect, attempt to reconnect
             console.log('🔄 Attempting to reconnect...');
             socket.connect();
         }
@@ -102,7 +107,6 @@ export const initializeSocket = (token) => {
     return socket;
 };
 
-// Disconnect socket
 export const disconnectSocket = () => {
     if (socket) {
         console.log('🔌 Manually disconnecting socket...');
@@ -112,24 +116,12 @@ export const disconnectSocket = () => {
     }
 };
 
-// Get current socket instance
-export const getSocket = () => {
-    return socket;
-};
-
-// Check if socket is connected
-export const isSocketConnected = () => {
-    return socket && socket.connected;
-};
-
-// Reconnect socket with new token
+export const getSocket = () => socket;
+export const isSocketConnected = () => socket && socket.connected;
 export const reconnectSocket = (token) => {
     console.log('🔄 Reconnecting socket with new token...');
-    if (socket) {
-        disconnectSocket();
-    }
+    if (socket) disconnectSocket();
     return initializeSocket(token);
 };
 
-// Export default for convenience
 export default socket;
