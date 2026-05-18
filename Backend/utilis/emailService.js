@@ -1,32 +1,32 @@
+
 const nodemailer = require('nodemailer');
 const fs = require('fs').promises;
 const path = require('path');
 const handlebars = require('handlebars');
 
-// Create transporter
+// Create transporter - GMAIL for production
 const createTransporter = () => {
-    if (process.env.NODE_ENV === 'development' && !process.env.EMAIL_HOST) {
+    // PRODUCTION on Render
+    if (process.env.NODE_ENV === 'production') {
+        console.log('🚀 Configuring Gmail SMTP for production');
+        
         return nodemailer.createTransport({
-            host: 'smtp.ethereal.email',
-            port: 587,
-            secure: false,
+            service: 'gmail',
             auth: {
-                user: process.env.ETHEREAL_EMAIL || 'your-ethereal-email',
-                pass: process.env.ETHEREAL_PASSWORD || 'your-ethereal-password'
+                user: process.env.EMAIL_USER,
+                pass: process.env.EMAIL_PASSWORD
             }
         });
     }
-
+    
+    // DEVELOPMENT - Use ethereal.email for testing
     return nodemailer.createTransport({
-        host: process.env.EMAIL_HOST || 'smtp.gmail.com',
-        port: process.env.EMAIL_PORT || 587,
-        secure: process.env.EMAIL_SECURE === 'true',
+        host: 'smtp.ethereal.email',
+        port: 587,
+        secure: false,
         auth: {
-            user: process.env.EMAIL_USER,
-            pass: process.env.EMAIL_PASSWORD
-        },
-        tls: {
-            rejectUnauthorized: process.env.NODE_ENV === 'production'
+            user: process.env.ETHEREAL_EMAIL || 'your-ethereal-email',
+            pass: process.env.ETHEREAL_PASSWORD || 'your-ethereal-password'
         }
     });
 };
@@ -37,9 +37,19 @@ const verifyConnection = async () => {
     try {
         await transporter.verify();
         console.log('✅ Email service ready');
+        console.log(`📧 Using: ${process.env.NODE_ENV === 'production' ? 'Gmail SMTP' : 'Ethereal'}`);
+        
+        if (process.env.NODE_ENV === 'production') {
+            console.log('🚀 Production email active with Gmail');
+        }
     } catch (error) {
         console.error('❌ Email service error:', error);
-        if (process.env.NODE_ENV === 'development') {
+        
+        if (process.env.NODE_ENV === 'production') {
+            console.error('🚨 CRITICAL: Email service failed in production!');
+            console.error('📧 Check Gmail credentials in environment variables');
+            console.error('Make sure "Less secure app access" is ON or use App Password');
+        } else {
             console.log('⚠️ Falling back to ethereal.email for testing');
             transporter = nodemailer.createTransport({
                 host: 'smtp.ethereal.email',
@@ -63,14 +73,10 @@ handlebars.registerHelper('includes', function (array, value) { return array && 
 handlebars.registerHelper('formatDate', function (date) { return new Date(date).toLocaleDateString(); });
 handlebars.registerHelper('formatDateTime', function (date) { return new Date(date).toLocaleString(); });
 handlebars.registerHelper('default', function (value, fallback) { return value || fallback; });
-
-// ✅ ADD THIS MISSING HELPER
 handlebars.registerHelper('split', function (str, separator) {
     if (!str) return [];
     return str.split(separator);
 });
-
-
 
 /**
  * Compile email template
@@ -95,20 +101,13 @@ const compileTemplate = async (templateName, context) => {
     }
 };
 
-// Handlebars helpers
-handlebars.registerHelper('eq', function (a, b) { return a === b; });
-handlebars.registerHelper('gt', function (a, b) { return a > b; });
-handlebars.registerHelper('includes', function (array, value) { return array && array.includes(value); });
-handlebars.registerHelper('formatDate', function (date) { return new Date(date).toLocaleDateString(); });
-handlebars.registerHelper('formatDateTime', function (date) { return new Date(date).toLocaleString(); });
-handlebars.registerHelper('default', function (value, fallback) { return value || fallback; });
-
 /**
  * Send email
  */
 const sendEmail = async ({ to, subject, template, context, attachments = [], bcc = [] }) => {
     try {
         console.log(`📧 Sending email to: ${to} | Template: ${template}`);
+        console.log(`🔧 Using: ${process.env.NODE_ENV === 'production' ? 'Gmail' : 'Ethereal'}`);
 
         const fullContext = {
             ...context,
@@ -125,10 +124,10 @@ const sendEmail = async ({ to, subject, template, context, attachments = [], bcc
         };
 
         const html = await compileTemplate(template, fullContext);
-        console.log('📄 HTML preview:', html.substring(0, 200) + '...');
+        console.log('📄 HTML length:', html.length);
 
         const mailOptions = {
-            from: `"CARD-AGENT" <${process.env.EMAIL_FROM || 'noreply@cardagent.rw'}>`,
+            from: process.env.EMAIL_FROM || `"CARD-AGENT" <${process.env.EMAIL_USER}>`,
             to,
             bcc: [...bcc, process.env.ADMIN_EMAIL].filter(Boolean),
             subject,
@@ -140,15 +139,23 @@ const sendEmail = async ({ to, subject, template, context, attachments = [], bcc
         }
 
         const info = await transporter.sendMail(mailOptions);
-        console.log(`✅ Email sent to ${to}`);
+        console.log(`✅ Email sent successfully to ${to}`);
+        console.log(`📊 Message ID: ${info.messageId}`);
 
-        if (process.env.NODE_ENV === 'development') {
+        if (process.env.NODE_ENV === 'development' && nodemailer.getTestMessageUrl) {
             console.log('📧 Preview URL:', nodemailer.getTestMessageUrl(info));
         }
 
         return { success: true, messageId: info.messageId, preview: nodemailer.getTestMessageUrl(info) };
     } catch (error) {
-        console.error('❌ Send email error:', error);
+        console.error('❌ Send email error DETAILS:', {
+            message: error.message,
+            code: error.code,
+            command: error.command,
+            response: error.response,
+            to: to,
+            template: template
+        });
         return { success: false, error: error.message };
     }
 };
@@ -192,9 +199,8 @@ const testEmailConfig = async (testEmail) => {
             message: 'Test email sent successfully',
             preview: result.preview,
             config: {
-                host: transporter.options.host,
-                port: transporter.options.port,
-                secure: transporter.options.secure
+                service: process.env.NODE_ENV === 'production' ? 'Gmail' : 'Ethereal',
+                environment: process.env.NODE_ENV
             }
         };
     } catch (error) {
@@ -231,7 +237,6 @@ const sendWelcomeEmail = async (user, company) => {
 const sendCoWorkerInvite = async (coWorker, company, adminUser, tempPassword) => {
     const orgNames = coWorker.permissions?.map(p => p.organizationName).join(', ') || 'No organizations assigned';
 
-    // ✅ FIX: Extract admin name as string, not object
     const adminNameString = typeof adminUser === 'object'
         ? `${adminUser.firstName || adminUser.name || ''} ${adminUser.lastName || ''}`.trim()
         : adminUser;
@@ -243,7 +248,7 @@ const sendCoWorkerInvite = async (coWorker, company, adminUser, tempPassword) =>
         context: {
             firstName: coWorker.firstName,
             companyName: company.name,
-            adminName: adminNameString,  // ✅ Now this is a string, not an object
+            adminName: adminNameString,
             email: coWorker.email,
             tempPassword: tempPassword,
             organizations: orgNames,
@@ -309,7 +314,6 @@ const sendPasswordResetEmail = async (user, resetToken) => {
  * Send account deactivated notification
  */
 const sendAccountDeactivatedEmail = async (user, companyName, adminUser) => {
-    // ✅ FIX: Extract admin name as string
     const adminNameString = typeof adminUser === 'object'
         ? `${adminUser.firstName || adminUser.name || ''} ${adminUser.lastName || ''}`.trim()
         : adminUser;
@@ -321,7 +325,7 @@ const sendAccountDeactivatedEmail = async (user, companyName, adminUser) => {
         context: {
             firstName: user.firstName,
             companyName: companyName,
-            adminName: adminNameString,  // ✅ Now this is a string
+            adminName: adminNameString,
             supportEmail: process.env.SUPPORT_EMAIL || 'support@cardagent.rw'
         }
     });
@@ -331,7 +335,6 @@ const sendAccountDeactivatedEmail = async (user, companyName, adminUser) => {
  * Send account permanently deleted notification
  */
 const sendAccountDeletedPermanentEmail = async (user, companyName, adminUser) => {
-    // ✅ FIX: Extract admin name as string
     const adminNameString = typeof adminUser === 'object'
         ? `${adminUser.firstName || adminUser.name || ''} ${adminUser.lastName || ''}`.trim()
         : adminUser;
@@ -344,7 +347,7 @@ const sendAccountDeletedPermanentEmail = async (user, companyName, adminUser) =>
             firstName: user.firstName,
             email: user.email,
             companyName: companyName,
-            adminName: adminNameString,  // ✅ Now this is a string
+            adminName: adminNameString,
             deletionDate: new Date().toLocaleDateString('en-US', {
                 year: 'numeric', month: 'long', day: 'numeric',
                 hour: '2-digit', minute: '2-digit'
@@ -358,15 +361,12 @@ const sendAccountDeletedPermanentEmail = async (user, companyName, adminUser) =>
  * Send permissions updated notification
  */
 const sendPermissionsUpdatedEmail = async (coWorker, company, adminUser, permissionsData) => {
-    // ✅ FIX: Extract admin name as string
     const adminNameString = typeof adminUser === 'object'
         ? `${adminUser.firstName || adminUser.name || ''} ${adminUser.lastName || ''}`.trim()
         : adminUser;
 
-    // ✅ Format permissions data for the template
     const formattedPermissions = [];
 
-    // If permissionsData has 'to' property (from update route)
     let newPermissions = permissionsData;
     let oldPermissions = [];
 
@@ -375,10 +375,8 @@ const sendPermissionsUpdatedEmail = async (coWorker, company, adminUser, permiss
         oldPermissions = permissionsData.from || [];
     }
 
-    // Group permissions by organization
     const orgPermissionsMap = new Map();
 
-    // Process new permissions (what the user now has)
     for (const perm of newPermissions) {
         const orgId = perm.organizationId?.toString() || perm.organizationId;
         if (!orgPermissionsMap.has(orgId)) {
@@ -389,7 +387,6 @@ const sendPermissionsUpdatedEmail = async (coWorker, company, adminUser, permiss
             });
         }
 
-        // Add all permissions the user has
         const permKeys = [
             'canManageStudents', 'canGenerateCards', 'canManageTemplates',
             'canUploadCSV', 'canUploadPhotos', 'canViewAnalytics',
@@ -403,7 +400,6 @@ const sendPermissionsUpdatedEmail = async (coWorker, company, adminUser, permiss
         }
     }
 
-    // Process old permissions to show what was removed (if we have old data)
     for (const perm of oldPermissions) {
         const orgId = perm.organizationId?.toString() || perm.organizationId;
         if (orgPermissionsMap.has(orgId)) {
@@ -421,7 +417,6 @@ const sendPermissionsUpdatedEmail = async (coWorker, company, adminUser, permiss
         }
     }
 
-    // Build the final permissions array for the template
     for (const [orgId, data] of orgPermissionsMap) {
         const changes = [];
         const allPerms = new Set([...data.permissions, ...data.oldPermissions]);
@@ -461,7 +456,6 @@ const sendPermissionsUpdatedEmail = async (coWorker, company, adminUser, permiss
     });
 };
 
-// Helper function to format permission keys into readable names
 function formatPermissionName(key) {
     const names = {
         'canManageStudents': 'Manage Students',
@@ -475,7 +469,6 @@ function formatPermissionName(key) {
     };
     return names[key] || key.replace('can', '').replace(/([A-Z])/g, ' $1').trim();
 }
-
 
 /**
  * Send super admin alert for new registration
@@ -492,7 +485,6 @@ const sendNewRegistrationAlert = async (company, adminUser) => {
             return { success: false, error: 'No super admin found' };
         }
 
-        // ✅ FIX: Extract admin name as string
         const adminNameString = `${adminUser.firstName} ${adminUser.lastName}`;
 
         const results = [];
@@ -504,7 +496,7 @@ const sendNewRegistrationAlert = async (company, adminUser) => {
                 context: {
                     superAdminName: superAdmin.firstName,
                     companyName: company.name,
-                    adminName: adminNameString,  // ✅ Now this is a string
+                    adminName: adminNameString,
                     adminEmail: adminUser.email,
                     companyPhone: company.phone,
                     companyAddress: `${company.address?.district}, ${company.address?.province}`,
@@ -528,7 +520,6 @@ module.exports = {
     sendBulkEmails,
     testEmailConfig,
     verifyConnection,
-    // CARD-AGENT specific
     sendWelcomeEmail,
     sendCoWorkerInvite,
     sendLicenseActivatedEmail,
