@@ -7,33 +7,28 @@ const handlebars = require('handlebars');
 // Create transporter - GMAIL for production
 const createTransporter = () => {
     if (process.env.NODE_ENV === 'production') {
-        console.log('🚀 Configuring Gmail SMTP for production');
+        console.log('🚀 Configuring Brevo SMTP for production');
+        console.log('📧 Using Brevo to avoid IPv6 issues');
 
         return nodemailer.createTransport({
-            host: 'smtp.gmail.com',
+            host: 'smtp-relay.brevo.com',
             port: 587,
-            secure: false, // false for 587
+            secure: false,
             auth: {
-                user: process.env.EMAIL_USER,
-                pass: process.env.EMAIL_PASSWORD
-            },
-            family: 4, // Force IPv4
-            tls: {
-                ciphers: 'SSLv3',
-                rejectUnauthorized: false
+                user: process.env.BREVO_SMTP_USER,
+                pass: process.env.BREVO_SMTP_KEY
             }
         });
     }
 
     // DEVELOPMENT
-    console.log('🔧 Using ethereal.email for development');
     return nodemailer.createTransport({
         host: 'smtp.ethereal.email',
         port: 587,
         secure: false,
         auth: {
-            user: process.env.ETHEREAL_EMAIL || 'your-ethereal-email',
-            pass: process.env.ETHEREAL_PASSWORD || 'your-ethereal-password'
+            user: process.env.ETHEREAL_EMAIL,
+            pass: process.env.ETHEREAL_PASSWORD
         }
     });
 };
