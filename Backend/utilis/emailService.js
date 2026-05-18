@@ -33,7 +33,28 @@ const createTransporter = () => {
     });
 };
 
+
+
 let transporter = createTransporter();
+
+
+
+// Set a timeout to detect hanging
+const timeoutPromise = new Promise((_, reject) => {
+    setTimeout(() => reject(new Error('Email sending timeout after 30 seconds')), 30000);
+});
+
+try {
+    const info = await Promise.race([
+        transporter.sendMail(mailOptions),
+        timeoutPromise
+    ]);
+    console.log(`✅ Email sent successfully to ${to}`);
+    // ... rest of success handling
+} catch (error) {
+    console.error('❌ Send email error:', error.message);
+    return { success: false, error: error.message };
+}
 
 const verifyConnection = async () => {
     try {
