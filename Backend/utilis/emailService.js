@@ -6,20 +6,27 @@ const handlebars = require('handlebars');
 
 // Create transporter - GMAIL for production
 const createTransporter = () => {
-    // PRODUCTION on Render
     if (process.env.NODE_ENV === 'production') {
         console.log('🚀 Configuring Gmail SMTP for production');
-        
+
         return nodemailer.createTransport({
-            service: 'gmail',
+            host: 'smtp.gmail.com',
+            port: 587,
+            secure: false, // false for 587
             auth: {
                 user: process.env.EMAIL_USER,
                 pass: process.env.EMAIL_PASSWORD
+            },
+            family: 4, // Force IPv4
+            tls: {
+                ciphers: 'SSLv3',
+                rejectUnauthorized: false
             }
         });
     }
-    
-    // DEVELOPMENT - Use ethereal.email for testing
+
+    // DEVELOPMENT
+    console.log('🔧 Using ethereal.email for development');
     return nodemailer.createTransport({
         host: 'smtp.ethereal.email',
         port: 587,
@@ -38,13 +45,13 @@ const verifyConnection = async () => {
         await transporter.verify();
         console.log('✅ Email service ready');
         console.log(`📧 Using: ${process.env.NODE_ENV === 'production' ? 'Gmail SMTP' : 'Ethereal'}`);
-        
+
         if (process.env.NODE_ENV === 'production') {
             console.log('🚀 Production email active with Gmail');
         }
     } catch (error) {
         console.error('❌ Email service error:', error);
-        
+
         if (process.env.NODE_ENV === 'production') {
             console.error('🚨 CRITICAL: Email service failed in production!');
             console.error('📧 Check Gmail credentials in environment variables');
@@ -169,7 +176,7 @@ const sendBulkEmails = async (emails) => {
         try {
             const result = await sendEmail(email);
             results.push({ ...email, ...result });
-            await new Promise(resolve => setTimeout(resolve, 500));
+            await new Promise(resolve => setTimeout(resolve, 50000));
         } catch (error) {
             results.push({ ...email, success: false, error: error.message });
         }
