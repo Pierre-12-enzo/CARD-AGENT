@@ -1,28 +1,42 @@
 const fs = require('fs').promises;
 const path = require('path');
 const handlebars = require('handlebars');
-const SibApiV3Sdk = require('sib-api-v3-sdk');
+let nodemailer = null; // Will load only in development
 
-let apiClient = null;
+// Only load nodemailer in development
+if (process.env.NODE_ENV !== 'production') {
+    nodemailer = require('nodemailer');
+}
+
+let SibApiV3Sdk = null;
 let apiInstance = null;
+
+// Load Brevo SDK only in production
+if (process.env.NODE_ENV === 'production') {
+    SibApiV3Sdk = require('sib-api-v3-sdk');
+}
 
 const createTransporter = () => {
     if (process.env.NODE_ENV === 'production') {
-        console.log('🚀 Configuring Brevo API for production (bypasses SMTP blocks)');
+        console.log('🚀 Configuring Brevo API for production');
 
         // Configure Brevo API
-        apiClient = SibApiV3Sdk.ApiClient.instance;
-        const apiKey = apiClient.authentications['api-key'];
+        const defaultClient = SibApiV3Sdk.ApiClient.instance;
+        const apiKey = defaultClient.authentications['api-key'];
         apiKey.apiKey = process.env.BREVO_API_KEY;
         apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
 
-        // Return a compatible interface
+        // Return Brevo API interface
         return {
             sendMail: async (mailOptions) => {
                 const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
+
+                // Extract email from "Name <email>" format
+                const fromEmail = mailOptions.from.match(/<(.+)>/)?.[1] || mailOptions.from;
+
                 sendSmtpEmail.sender = {
                     name: 'CARD-AGENT',
-                    email: mailOptions.from.match(/<(.+)>/)?.[1] || mailOptions.from
+                    email: fromEmail
                 };
                 sendSmtpEmail.to = [{ email: mailOptions.to }];
                 sendSmtpEmail.subject = mailOptions.subject;
@@ -37,10 +51,9 @@ const createTransporter = () => {
             },
             verify: async () => {
                 try {
-                    // Test with a simple email to yourself
                     const testEmail = new SibApiV3Sdk.SendSmtpEmail();
-                    testEmail.sender = { email: process.env.EMAIL_FROM.match(/<(.+)>/)?.[1] || process.env.EMAIL_FROM };
-                    testEmail.to = [{ email: process.env.ADMIN_EMAIL }];
+                    testEmail.sender = { email: 'dusenge.enzo87@gmail.com' };
+                    testEmail.to = [{ email: process.env.ADMIN_EMAIL || 'dusenge.enzo87@gmail.com' }];
                     testEmail.subject = 'Test';
                     testEmail.htmlContent = '<p>Test</p>';
                     await apiInstance.sendTransacEmail(testEmail);
@@ -54,7 +67,6 @@ const createTransporter = () => {
 
     // DEVELOPMENT - Use ethereal.email
     console.log('🔧 Using ethereal.email for development');
-    const nodemailer = require('nodemailer');
     return nodemailer.createTransport({
         host: 'smtp.ethereal.email',
         port: 587,
@@ -66,37 +78,24 @@ const createTransporter = () => {
     });
 };
 
-
-
 let transporter = createTransporter();
 
 const verifyConnection = async () => {
     try {
         await transporter.verify();
         console.log('✅ Email service ready');
-        console.log(`📧 Using: ${process.env.NODE_ENV === 'production' ? 'Gmail SMTP' : 'Ethereal'}`);
 
         if (process.env.NODE_ENV === 'production') {
-            console.log('🚀 Production email active with Gmail');
+            console.log('🚀 Production email active with Brevo API');
+        } else {
+            console.log('📧 Development email active with Ethereal');
         }
     } catch (error) {
-        console.error('❌ Email service error:', error);
+        console.error('❌ Email service error:', error.message);
 
         if (process.env.NODE_ENV === 'production') {
             console.error('🚨 CRITICAL: Email service failed in production!');
-            console.error('📧 Check Gmail credentials in environment variables');
-            console.error('Make sure "Less secure app access" is ON or use App Password');
-        } else {
-            console.log('⚠️ Falling back to ethereal.email for testing');
-            transporter = nodemailer.createTransport({
-                host: 'smtp.ethereal.email',
-                port: 587,
-                secure: false,
-                auth: {
-                    user: process.env.ETHEREAL_EMAIL || 'your-ethereal-email',
-                    pass: process.env.ETHEREAL_PASSWORD || 'your-ethereal-password'
-                }
-            });
+            console.error('📧 Check BREVO_API_KEY in environment variables');
         }
     }
 };
@@ -144,7 +143,12 @@ const compileTemplate = async (templateName, context) => {
 const sendEmail = async ({ to, subject, template, context, attachments = [], bcc = [] }) => {
     try {
         console.log(`📧 Sending email to: ${to} | Template: ${template}`);
-        console.log(`🔧 Using: ${process.env.NODE_ENV === 'production' ? 'Gmail' : 'Ethereal'}`);
+
+        if (process.env.NODE_ENV === 'production') {
+            console.log('🔧 Using: Brevo API');
+        } else {
+            console.log('🔧 Using: Ethereal SMTP');
+        }
 
         const fullContext = {
             ...context,
@@ -164,7 +168,7 @@ const sendEmail = async ({ to, subject, template, context, attachments = [], bcc
         console.log('📄 HTML length:', html.length);
 
         const mailOptions = {
-            from: process.env.EMAIL_FROM || `"CARD-AGENT" <${process.env.EMAIL_USER}>`,
+            from: process.env.EMAIL_FROM || `"CARD-AGENT" <${process.env.EMAIL_USER || 'dusenge.enzo87@gmail.com'}>`,
             to,
             bcc: [...bcc, process.env.ADMIN_EMAIL].filter(Boolean),
             subject,
@@ -179,20 +183,16 @@ const sendEmail = async ({ to, subject, template, context, attachments = [], bcc
         console.log(`✅ Email sent successfully to ${to}`);
         console.log(`📊 Message ID: ${info.messageId}`);
 
-        if (process.env.NODE_ENV === 'development' && nodemailer.getTestMessageUrl) {
-            console.log('📧 Preview URL:', nodemailer.getTestMessageUrl(info));
+        // Only show preview URL in development
+        let previewUrl = null;
+        if (process.env.NODE_ENV !== 'production' && nodemailer && nodemailer.getTestMessageUrl) {
+            previewUrl = nodemailer.getTestMessageUrl(info);
+            console.log('📧 Preview URL:', previewUrl);
         }
 
-        return { success: true, messageId: info.messageId, preview: nodemailer.getTestMessageUrl(info) };
+        return { success: true, messageId: info.messageId, preview: previewUrl };
     } catch (error) {
-        console.error('❌ Send email error DETAILS:', {
-            message: error.message,
-            code: error.code,
-            command: error.command,
-            response: error.response,
-            to: to,
-            template: template
-        });
+        console.error('❌ Send email error:', error.message);
         return { success: false, error: error.message };
     }
 };
@@ -206,7 +206,7 @@ const sendBulkEmails = async (emails) => {
         try {
             const result = await sendEmail(email);
             results.push({ ...email, ...result });
-            await new Promise(resolve => setTimeout(resolve, 50000));
+            await new Promise(resolve => setTimeout(resolve, 500));
         } catch (error) {
             results.push({ ...email, success: false, error: error.message });
         }
@@ -236,7 +236,7 @@ const testEmailConfig = async (testEmail) => {
             message: 'Test email sent successfully',
             preview: result.preview,
             config: {
-                service: process.env.NODE_ENV === 'production' ? 'Gmail' : 'Ethereal',
+                service: process.env.NODE_ENV === 'production' ? 'Brevo API' : 'Ethereal',
                 environment: process.env.NODE_ENV
             }
         };
