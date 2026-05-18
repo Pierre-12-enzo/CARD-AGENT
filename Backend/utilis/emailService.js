@@ -1,34 +1,67 @@
-
-const nodemailer = require('nodemailer');
 const fs = require('fs').promises;
 const path = require('path');
 const handlebars = require('handlebars');
+const SibApiV3Sdk = require('sib-api-v3-sdk');
 
-// Create transporter - GMAIL for production
+let apiClient = null;
+let apiInstance = null;
+
 const createTransporter = () => {
     if (process.env.NODE_ENV === 'production') {
-        console.log('🚀 Configuring Brevo SMTP for production');
-        console.log('📧 Using Brevo to avoid IPv6 issues');
+        console.log('🚀 Configuring Brevo API for production (bypasses SMTP blocks)');
 
-        return nodemailer.createTransport({
-            host: 'smtp-relay.brevo.com',
-            port: 587,
-            secure: false,
-            auth: {
-                user: process.env.BREVO_SMTP_USER,
-                pass: process.env.BREVO_SMTP_KEY
+        // Configure Brevo API
+        apiClient = SibApiV3Sdk.ApiClient.instance;
+        const apiKey = apiClient.authentications['api-key'];
+        apiKey.apiKey = process.env.BREVO_API_KEY;
+        apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
+
+        // Return a compatible interface
+        return {
+            sendMail: async (mailOptions) => {
+                const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
+                sendSmtpEmail.sender = {
+                    name: 'CARD-AGENT',
+                    email: mailOptions.from.match(/<(.+)>/)?.[1] || mailOptions.from
+                };
+                sendSmtpEmail.to = [{ email: mailOptions.to }];
+                sendSmtpEmail.subject = mailOptions.subject;
+                sendSmtpEmail.htmlContent = mailOptions.html;
+
+                if (mailOptions.bcc && mailOptions.bcc.length) {
+                    sendSmtpEmail.bcc = mailOptions.bcc.map(email => ({ email }));
+                }
+
+                const result = await apiInstance.sendTransacEmail(sendSmtpEmail);
+                return { messageId: result.messageId };
+            },
+            verify: async () => {
+                try {
+                    // Test with a simple email to yourself
+                    const testEmail = new SibApiV3Sdk.SendSmtpEmail();
+                    testEmail.sender = { email: process.env.EMAIL_FROM.match(/<(.+)>/)?.[1] || process.env.EMAIL_FROM };
+                    testEmail.to = [{ email: process.env.ADMIN_EMAIL }];
+                    testEmail.subject = 'Test';
+                    testEmail.htmlContent = '<p>Test</p>';
+                    await apiInstance.sendTransacEmail(testEmail);
+                    return true;
+                } catch (e) {
+                    throw e;
+                }
             }
-        });
+        };
     }
 
-    // DEVELOPMENT
+    // DEVELOPMENT - Use ethereal.email
+    console.log('🔧 Using ethereal.email for development');
+    const nodemailer = require('nodemailer');
     return nodemailer.createTransport({
         host: 'smtp.ethereal.email',
         port: 587,
         secure: false,
         auth: {
-            user: process.env.ETHEREAL_EMAIL,
-            pass: process.env.ETHEREAL_PASSWORD
+            user: process.env.ETHEREAL_EMAIL || 'your-ethereal-email',
+            pass: process.env.ETHEREAL_PASSWORD || 'your-ethereal-password'
         }
     });
 };
