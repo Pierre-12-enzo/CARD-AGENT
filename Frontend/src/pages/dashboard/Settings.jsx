@@ -1,13 +1,22 @@
 // pages/dashboard/Settings.jsx - CARD-AGENT NAVY & CRIMSON - FULL CINEMATIC
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { authAPI, companyAPI, studentAPI } from '../../services/api';
+import { authAPI, companyAPI, studentAPI, organizationAPI } from '../../services/api';
 
 const Settings = () => {
   const { user, updateUser } = useAuth();
   const [activeTab, setActiveTab] = useState('profile');
   const [loading, setLoading] = useState(false);
   const [saveStatus, setSaveStatus] = useState('');
+
+  // Cleanup state
+  const [cleanupOrgs, setCleanupOrgs] = useState([]);
+  const [cleanupStats, setCleanupStats] = useState({ totalPeople: 0, totalPhotos: 0, totalCards: 0 });
+  const [loadingCleanup, setLoadingCleanup] = useState(false);
+  const [confirmOrgId, setConfirmOrgId] = useState(null);
+  const [confirmText, setConfirmText] = useState('');
+  const [deleting, setDeleting] = useState(false);
+  const [cleanupResult, setCleanupResult] = useState(null);
 
   // Profile
   const [profileData, setProfileData] = useState({
@@ -27,10 +36,7 @@ const Settings = () => {
     autoBackup: true, compressionQuality: 85, maxFileSize: 10, retentionPeriod: 30
   });
 
-  // Cleanup stats
-  const [cleanupStats, setCleanupStats] = useState({ students: 0, withPhotos: 0 });
-  const [cleaning, setCleaning] = useState(false);
-  const [cleanupResult, setCleanupResult] = useState(null);
+  // Cleanup stats  const [cleaning, setCleaning] = useState(false);
   const [confirmAction, setConfirmAction] = useState(null);
   const [confirmationText, setConfirmationText] = useState('');
 
@@ -61,6 +67,82 @@ const Settings = () => {
         });
       }
     } catch (e) { console.error('Failed to load company:', e); }
+  };
+
+  // Load cleanup data
+  const loadCleanupData = async () => {
+    setLoadingCleanup(true);
+    try {
+      // ✅ Use existing grouped-by-organization endpoint
+      const response = await studentAPI.getGroupedByOrganization();
+
+      if (response.success && response.organizations) {
+        const orgs = response.organizations.map(org => ({
+          _id: org.organization._id,
+          name: org.organization.name,
+          type: org.organization.type,
+          code: org.organization.code,
+          students: org.stats?.totalStudents || 0,
+          employees: org.stats?.totalEmployees || 0,
+          total: (org.stats?.totalStudents || 0) + (org.stats?.totalEmployees || 0),
+          photos: org.stats?.withPhotos || 0,
+          cards: org.stats?.cardsGenerated || 0
+        }));
+
+        setCleanupOrgs(orgs);
+
+        // Calculate totals
+        const totalPeople = orgs.reduce((sum, o) => sum + o.total, 0);
+        const totalPhotos = orgs.reduce((sum, o) => sum + o.photos, 0);
+        const totalCards = orgs.reduce((sum, o) => sum + o.cards, 0);
+        setCleanupStats({ totalPeople, totalPhotos, totalCards });
+      }
+    } catch (error) {
+      console.error('Failed to load cleanup data:', error);
+    } finally {
+      setLoadingCleanup(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'cleanup') {
+      loadCleanupData();
+    }
+  }, [activeTab]);
+
+  // Handle delete all data for an organization
+  const handleDeleteOrgData = async (orgId) => {
+    if (confirmText !== 'DELETE') return;
+
+    setDeleting(true);
+    try {
+      const response = await studentAPI.deleteAll(orgId);
+      if (response.success) {
+        setCleanupResult({
+          type: 'success',
+          message: `All records deleted successfully!`,
+          details: `${response.deletedCount || 0} records removed from the organization.`
+        });
+        // Reload cleanup data
+        loadCleanupData();
+      } else {
+        setCleanupResult({
+          type: 'error',
+          message: 'Failed to delete records',
+          details: response.error || 'An error occurred'
+        });
+      }
+    } catch (error) {
+      setCleanupResult({
+        type: 'error',
+        message: 'Failed to delete records',
+        details: error.message || 'An error occurred'
+      });
+    } finally {
+      setDeleting(false);
+      setConfirmOrgId(null);
+      setConfirmText('');
+    }
   };
 
   const loadCleanupStats = async () => {
@@ -186,9 +268,8 @@ const Settings = () => {
           <div className="bg-white rounded-2xl shadow-lg border border-slate-200/50 p-6">
             {/* Status Message */}
             {statusMessage && (
-              <div className={`mb-5 p-4 rounded-xl border flex items-center space-x-3 ${
-                isSuccess ? 'bg-green-50 border-green-200' : isError ? 'bg-red-50 border-red-200' : 'bg-blue-50 border-blue-200'
-              }`}>
+              <div className={`mb-5 p-4 rounded-xl border flex items-center space-x-3 ${isSuccess ? 'bg-green-50 border-green-200' : isError ? 'bg-red-50 border-red-200' : 'bg-blue-50 border-blue-200'
+                }`}>
                 <i className={`pi ${isSuccess ? 'pi-check-circle text-green-600' : isError ? 'pi-times-circle text-red-600' : 'pi-spinner pi-spin text-blue-600'}`}></i>
                 <span className={`text-sm font-medium ${isSuccess ? 'text-green-700' : isError ? 'text-red-700' : 'text-blue-700'}`}>{statusMessage}</span>
               </div>
@@ -372,58 +453,183 @@ const Settings = () => {
             {activeTab === 'cleanup' && (
               <div className="space-y-6">
                 <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-xl font-bold text-slate-800">System Cleanup</h3>
-                  <i className="pi pi-trash text-red-500 text-xl"></i>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                  <div className="bg-gradient-to-br from-slate-50 to-slate-100 rounded-xl p-4 border border-slate-200">
-                    <div className="flex items-center justify-between">
-                      <div><p className="text-sm text-slate-500">Total Records</p><p className="text-2xl font-bold text-slate-800">{cleanupStats.students}</p></div>
-                      <i className="pi pi-users text-slate-400 text-xl"></i>
-                    </div>
+                  <div>
+                    <h3 className="text-xl font-bold text-slate-800">System Cleanup</h3>
+                    <p className="text-sm text-slate-500 mt-1">Manage and delete records per organization</p>
                   </div>
-                  <div className="bg-gradient-to-br from-red-50 to-red-50/50 rounded-xl p-4 border border-red-200">
-                    <div className="flex items-center justify-between">
-                      <div><p className="text-sm text-red-600">With Photos</p><p className="text-2xl font-bold text-red-700">{cleanupStats.withPhotos}</p></div>
-                      <i className="pi pi-image text-red-400 text-xl"></i>
-                    </div>
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+                    <span className="text-xs text-slate-500">{cleanupOrgs.length} organizations</span>
                   </div>
                 </div>
+
+                {/* 🔥 Organization Cleanup Cards */}
+                {loadingCleanup ? (
+                  <div className="flex justify-center py-12">
+                    <div className="w-10 h-10 border-4 border-slate-200 border-t-red-600 rounded-full animate-spin"></div>
+                  </div>
+                ) : cleanupOrgs.length === 0 ? (
+                  <div className="text-center py-12 bg-slate-50 rounded-2xl border border-slate-200">
+                    <i className="pi pi-building text-4xl text-slate-300 mb-3 block"></i>
+                    <p className="text-slate-500 font-medium">No organizations found</p>
+                    <p className="text-sm text-slate-400 mt-1">Create organizations first to manage their data</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {/* Platform-wide Stats */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-2">
+                      <CleanupStat icon="pi pi-building" label="Organizations" value={cleanupOrgs.length} color="slate" />
+                      <CleanupStat icon="pi pi-users" label="Total Records" value={cleanupStats.totalPeople} color="red" />
+                      <CleanupStat icon="pi pi-image" label="Total Photos" value={cleanupStats.totalPhotos} color="slate" />
+                      <CleanupStat icon="pi pi-qrcode" label="Cards Generated" value={cleanupStats.totalCards} color="red" />
+                    </div>
+
+                    {/* Individual Organization Cards */}
+                    {cleanupOrgs.map((org) => (
+                      <div key={org._id}
+                        className="bg-white border border-slate-200 rounded-2xl p-5 hover:shadow-lg transition-all duration-300">
+
+                        {/* Header */}
+                        <div className="flex items-center justify-between mb-4">
+                          <div className="flex items-center space-x-3">
+                            <div className={`w-11 h-11 rounded-xl flex items-center justify-center text-xl shadow-md ${org.type === 'corporate' ? 'bg-slate-200' : 'bg-red-100'
+                              }`}>
+                              {org.type === 'corporate' ? '🏢' : '🏫'}
+                            </div>
+                            <div>
+                              <h4 className="font-bold text-slate-800">{org.name}</h4>
+                              <span className="text-xs text-slate-500 capitalize flex items-center gap-1">
+                                <span className={`w-1.5 h-1.5 rounded-full ${org.type === 'corporate' ? 'bg-slate-500' : 'bg-red-500'
+                                  }`}></span>
+                                {org.type} • {org.code}
+                              </span>
+                            </div>
+                          </div>
+                          {/* Live status indicator */}
+                          <div className="flex items-center gap-1.5">
+                            <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></span>
+                            <span className="text-xs text-slate-400">Active</span>
+                          </div>
+                        </div>
+
+                        {/* Stats Grid */}
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+                          <MiniCleanupStat label="Students" value={org.students} icon="pi pi-graduation-cap" />
+                          <MiniCleanupStat label="Employees" value={org.employees} icon="pi pi-briefcase" />
+                          <MiniCleanupStat label="Photos" value={org.photos} icon="pi pi-image" />
+                          <MiniCleanupStat label="Cards" value={org.cards} icon="pi pi-qrcode" />
+                        </div>
+
+                        {/* Delete Section */}
+                        <div className="border-t border-slate-100 pt-4">
+                          {org.total > 0 ? (
+                            <div className="space-y-3">
+                              <p className="text-xs text-slate-500">
+                                This will permanently delete <span className="font-semibold text-slate-700">{org.total} records</span>
+                                {org.photos > 0 && <span> including <span className="font-semibold text-red-600">{org.photos} photos</span> from cloud storage</span>}.
+                              </p>
+
+                              {confirmOrgId === org._id ? (
+                                /* Confirmation State */
+                                <div className="bg-red-50 border-2 border-red-300 rounded-xl p-4 space-y-3 animate-scale-in">
+                                  <div className="flex items-start space-x-2">
+                                    <i className="pi pi-exclamation-triangle text-red-600 mt-0.5"></i>
+                                    <div>
+                                      <p className="font-semibold text-red-800 text-sm">
+                                        Delete ALL records from "{org.name}"?
+                                      </p>
+                                      <p className="text-xs text-red-700 mt-1">
+                                        Type <code className="bg-red-100 px-1.5 py-0.5 rounded text-red-800 font-bold">DELETE</code> to confirm
+                                      </p>
+                                    </div>
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <input
+                                      type="text"
+                                      value={confirmText}
+                                      onChange={(e) => setConfirmText(e.target.value)}
+                                      placeholder="Type DELETE to confirm"
+                                      className="flex-1 px-3 py-2 border border-red-300 rounded-lg text-sm focus:ring-2 focus:ring-red-500"
+                                      autoFocus
+                                    />
+                                    <button
+                                      onClick={() => handleDeleteOrgData(org._id)}
+                                      disabled={confirmText !== 'DELETE' || deleting}
+                                      className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 disabled:opacity-50 transition-colors whitespace-nowrap flex items-center gap-1"
+                                    >
+                                      {deleting ? (
+                                        <><i className="pi pi-spinner pi-spin text-xs"></i> Deleting...</>
+                                      ) : (
+                                        <><i className="pi pi-trash text-xs"></i> Delete All</>
+                                      )}
+                                    </button>
+                                    <button
+                                      onClick={() => { setConfirmOrgId(null); setConfirmText(''); }}
+                                      disabled={deleting}
+                                      className="px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-600 hover:bg-slate-50"
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                /* Delete Button */
+                                <button
+                                  onClick={() => { setConfirmOrgId(org._id); setConfirmText(''); }}
+                                  className="flex items-center gap-2 px-4 py-2 bg-white border border-red-200 text-red-600 rounded-xl text-sm font-medium hover:bg-red-50 hover:border-red-300 transition-all"
+                                >
+                                  <i className="pi pi-trash"></i>
+                                  <span>Delete All Records</span>
+                                </button>
+                              )}
+                            </div>
+                          ) : (
+                            <p className="text-xs text-slate-400 flex items-center gap-1">
+                              <i className="pi pi-check-circle text-green-500"></i>
+                              No records to delete
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Result Message */}
                 {cleanupResult && (
-                  <div className={`p-4 rounded-xl border ${cleanupResult.type === 'success' ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-800'}`}>
-                    <div className="flex items-start space-x-3">
-                      <i className={`pi ${cleanupResult.type === 'success' ? 'pi-check-circle' : 'pi-times-circle'} mt-0.5`}></i>
-                      <p className="text-sm font-medium">{cleanupResult.message}</p>
+                  <div className={`p-4 rounded-xl border flex items-start space-x-3 animate-slide-up ${cleanupResult.type === 'success' ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'
+                    }`}>
+                    <i className={`pi ${cleanupResult.type === 'success' ? 'pi-check-circle text-green-600' : 'pi-times-circle text-red-600'} mt-0.5`}></i>
+                    <div>
+                      <p className={`text-sm font-medium ${cleanupResult.type === 'success' ? 'text-green-800' : 'text-red-800'}`}>
+                        {cleanupResult.message}
+                      </p>
+                      {cleanupResult.details && (
+                        <p className="text-xs text-slate-500 mt-1">{cleanupResult.details}</p>
+                      )}
                     </div>
+                    <button onClick={() => setCleanupResult(null)} className="ml-auto text-slate-400 hover:text-slate-600">
+                      <i className="pi pi-times text-xs"></i>
+                    </button>
                   </div>
                 )}
-                <div className="bg-red-50 border border-red-200 rounded-xl p-4">
+
+                {/* Help Note */}
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-4">
                   <div className="flex items-start space-x-3">
-                    <i className="pi pi-exclamation-triangle text-red-600 mt-0.5"></i>
+                    <i className="pi pi-info-circle text-slate-500 mt-0.5"></i>
                     <div>
-                      <p className="font-semibold text-red-800">⚠️ Dangerous Action</p>
-                      <p className="text-sm text-red-700 mt-1">This will permanently delete all student records and their photos from Cloudinary. This action cannot be undone.</p>
+                      <p className="text-sm font-medium text-slate-700">About Data Cleanup</p>
+                      <ul className="text-xs text-slate-500 mt-1 space-y-1 list-disc list-inside">
+                        <li>Deleting organization data is <strong>permanent</strong> and cannot be undone</li>
+                        <li>Photos stored in Cloudinary will be permanently removed</li>
+                        <li>Card generation history will be cleared</li>
+                        <li>Template files associated with the organization will also be deleted</li>
+                        <li>The organization itself will remain - only its people, photos, and cards are removed</li>
+                      </ul>
                     </div>
                   </div>
                 </div>
-                <button onClick={handleDeleteAllStudents} disabled={cleaning || cleanupStats.students === 0}
-                  className="w-full bg-gradient-to-r from-red-600 to-red-500 text-white px-6 py-4 rounded-xl font-semibold hover:from-red-700 hover:to-red-600 disabled:opacity-50 transition-all shadow-lg flex items-center justify-center space-x-2">
-                  {cleaning ? <><i className="pi pi-spinner pi-spin"></i><span>Processing...</span></> : <><i className="pi pi-trash"></i><span>Delete All Records ({cleanupStats.students})</span></>}
-                </button>
-                {confirmAction === 'delete-students' && (
-                  <div className="bg-white border-2 border-red-300 rounded-xl p-4 space-y-3">
-                    <p className="text-sm font-medium text-slate-700">Type "DELETE ALL STUDENTS" to confirm:</p>
-                    <input type="text" value={confirmationText} onChange={(e) => setConfirmationText(e.target.value)}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" placeholder="DELETE ALL STUDENTS" autoFocus />
-                    <div className="flex gap-2">
-                      <button onClick={() => { setConfirmAction(null); setConfirmationText(''); }}
-                        className="flex-1 py-2 border border-slate-300 rounded-lg text-sm">Cancel</button>
-                      <button onClick={handleDeleteAllStudents}
-                        disabled={confirmationText.toLowerCase() !== 'delete all students'}
-                        className="flex-1 py-2 bg-red-600 text-white rounded-lg text-sm disabled:opacity-50">Confirm Delete</button>
-                    </div>
-                  </div>
-                )}
               </div>
             )}
           </div>
@@ -435,10 +641,25 @@ const Settings = () => {
 
 // ===== SUB-COMPONENTS =====
 
+const CleanupStat = ({ icon, label, value, color }) => (
+  <div className="bg-white rounded-xl shadow border border-slate-200/50 p-3 text-center">
+    <i className={`${icon} text-lg mb-1 ${color === 'red' ? 'text-red-500' : 'text-slate-500'}`}></i>
+    <p className="text-xl font-bold text-slate-800">{value}</p>
+    <p className="text-xs text-slate-500">{label}</p>
+  </div>
+);
+
+const MiniCleanupStat = ({ label, value, icon }) => (
+  <div className="bg-slate-50 rounded-lg p-2 text-center">
+    <i className={`${icon} text-xs mb-0.5 ${value > 0 ? 'text-slate-600' : 'text-slate-300'}`}></i>
+    <p className={`text-sm font-bold ${value > 0 ? 'text-slate-800' : 'text-slate-400'}`}>{value}</p>
+    <p className="text-[10px] text-slate-500">{label}</p>
+  </div>
+);
+
 const SideTab = ({ icon, label, active, onClick }) => (
-  <button onClick={onClick} className={`w-full flex items-center space-x-3 p-3 rounded-xl transition-all text-sm ${
-    active ? 'bg-red-50 text-red-700 border border-red-200 shadow-sm' : 'text-slate-600 hover:bg-slate-50 border border-transparent'
-  }`}>
+  <button onClick={onClick} className={`w-full flex items-center space-x-3 p-3 rounded-xl transition-all text-sm ${active ? 'bg-red-50 text-red-700 border border-red-200 shadow-sm' : 'text-slate-600 hover:bg-slate-50 border border-transparent'
+    }`}>
     <i className={`${icon} text-base ${active ? 'text-red-600' : 'text-slate-500'}`}></i>
     <span className="font-medium">{label}</span>
   </button>

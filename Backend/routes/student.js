@@ -438,6 +438,70 @@ router.get('/grouped-by-organization', async (req, res) => {
 });
 
 // ============================================
+// GET STUDENT STATISTICS
+// ============================================
+router.get('/stats', async (req, res) => {
+  try {
+    const query = { companyId: req.user.companyId };
+
+    // Apply organization filter if provided
+    if (req.query.organizationId) {
+      query.schoolId = req.query.organizationId;
+    }
+
+    // For co-worker, only show their permitted orgs
+    if (req.user.role === 'co_worker') {
+      const allowedOrgIds = req.user.permissions?.map(p => p.organizationId) || [];
+      if (allowedOrgIds.length > 0) {
+        query.schoolId = { $in: allowedOrgIds };
+      } else {
+        return res.json({
+          success: true,
+          stats: {
+            totalStudents: 0,
+            studentsWithPhotos: 0,
+            studentsWithoutPhotos: 0,
+            totalEmployees: 0,
+            employeesWithPhotos: 0,
+            employeesWithoutPhotos: 0,
+            totalPeople: 0,
+            cardGenerated: 0,
+            pendingCards: 0
+          }
+        });
+      }
+    }
+
+    const [totalStudents, studentsWithPhotos, totalEmployees, employeesWithPhotos, cardGenerated] = await Promise.all([
+      Student.countDocuments({ ...query, personType: 'student', isActive: true }),
+      Student.countDocuments({ ...query, personType: 'student', has_photo: true, isActive: true }),
+      Student.countDocuments({ ...query, personType: 'employee', isActive: true }),
+      Student.countDocuments({ ...query, personType: 'employee', has_photo: true, isActive: true }),
+      Student.countDocuments({ ...query, card_generated: true, isActive: true })
+    ]);
+
+    res.json({
+      success: true,
+      stats: {
+        totalStudents,
+        studentsWithPhotos,
+        studentsWithoutPhotos: totalStudents - studentsWithPhotos,
+        totalEmployees,
+        employeesWithPhotos,
+        employeesWithoutPhotos: totalEmployees - employeesWithPhotos,
+        totalPeople: totalStudents + totalEmployees,
+        cardGenerated,
+        pendingCards: (totalStudents + totalEmployees) - cardGenerated
+      }
+    });
+
+  } catch (error) {
+    console.error('Get stats error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ============================================
 // 6. GET students for specific organization
 // ============================================
 router.get('/organization/:orgId', async (req, res) => {
@@ -532,6 +596,99 @@ router.get('/organization/:orgId/filter-options', async (req, res) => {
   }
 });
 
+// DELETE ALL STUDENTS FOR ORGANIZATION
+// ============================================
+router.delete('/delete-all', async (req, res) => {
+  try {
+    const { organizationId } = req.query;
+
+    console.log('🗑️ Delete all request received:');
+    console.log('   Organization ID:', organizationId);
+    console.log('   User:', req.user?.email, 'Role:', req.user?.role);
+
+    // Validate organizationId
+    if (!organizationId) {
+      return res.status(400).json({
+        success: false,
+        error: 'organizationId is required'
+      });
+    }
+
+    // Verify organization exists and belongs to user's company
+    const organization = await School.findOne({
+      _id: organizationId,
+      companyId: req.user.companyId
+    });
+
+    if (!organization) {
+      return res.status(404).json({
+        success: false,
+        error: 'Organization not found or access denied'
+      });
+    }
+
+    console.log('✅ Organization verified:', organization.name);
+
+    // Check permissions for co-worker
+    if (req.user.role === 'co_worker') {
+      const hasPermission = req.user.permissions?.some(
+        p => p.organizationId?.toString() === organizationId && p.canManageStudents
+      );
+      if (!hasPermission) {
+        return res.status(403).json({
+          success: false,
+          error: 'Access denied - You do not have permission to delete records in this organization'
+        });
+      }
+    }
+
+    // Get all people to count and delete photos
+    const people = await Student.find({ schoolId: organizationId });
+    console.log(`📊 Found ${people.length} people to delete`);
+
+    // Delete photos from Cloudinary
+    let deletedPhotos = 0;
+    let failedPhotos = 0;
+
+    for (const person of people) {
+      if (person.photo_public_id) {
+        try {
+          await cloudinary.uploader.destroy(person.photo_public_id);
+          deletedPhotos++;
+          console.log(`   ✅ Deleted photo: ${person.photo_public_id}`);
+        } catch (photoError) {
+          failedPhotos++;
+          console.warn(`   ⚠️ Failed to delete photo for ${person.name}:`, photoError.message);
+        }
+      }
+    }
+
+    console.log(`📸 Photos deleted: ${deletedPhotos}, Failed: ${failedPhotos}`);
+
+    // Delete all records from database
+    const result = await Student.deleteMany({ schoolId: organizationId });
+
+    console.log(`✅ Database deleted: ${result.deletedCount} records`);
+
+    // Send success response
+    res.json({
+      success: true,
+      message: `Successfully deleted ${result.deletedCount} people and ${deletedPhotos} photos`,
+      details: `Records: ${result.deletedCount} | Photos deleted: ${deletedPhotos} | Failed: ${failedPhotos}`,
+      deletedCount: result.deletedCount,
+      deletedPhotos: deletedPhotos,
+      failedPhotos: failedPhotos
+    });
+
+  } catch (error) {
+    console.error('❌ Delete all error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 // ============================================
 // DELETE a student - CORRECTED
 // ============================================
@@ -584,38 +741,89 @@ router.delete('/:id', async (req, res) => {
 });
 
 // ============================================
+
+
+// ============================================
 // 9. BULK IMPORT STUDENTS FROM CSV
 // ============================================
 router.post('/bulk-import', uploadCSV.single('csv'), async (req, res) => {
   try {
+    console.log('📦 Starting bulk import...');
+
     if (!req.file) {
       return res.status(400).json({ success: false, error: 'CSV file is required' });
     }
 
+    // ✅ Get organizationId from request body
+    const { organizationId } = req.body;
+
+    if (!organizationId) {
+      return res.status(400).json({ success: false, error: 'organizationId is required' });
+    }
+
+    // ✅ Verify organization exists and user has access
+    const organization = await School.findOne({
+      _id: organizationId,
+      companyId: req.user.companyId
+    });
+
+    if (!organization) {
+      return res.status(404).json({ success: false, error: 'Organization not found' });
+    }
+
+    // Parse CSV
     const students = await parseCSVFromBuffer(req.file.buffer);
-    const studentsWithSchool = students.map(student => ({ ...student, schoolId: req.user.schoolId }));
+    console.log(`📊 Parsed ${students.length} records from CSV`);
 
-    const results = { total: studentsWithSchool.length, created: 0, updated: 0, skipped: 0, errors: [] };
+    const results = {
+      total: students.length,
+      created: 0,
+      updated: 0,
+      skipped: 0,
+      errors: []
+    };
 
-    for (const studentData of studentsWithSchool) {
+    for (const studentData of students) {
       try {
-        const existingStudent = await Student.findOne({ student_id: studentData.student_id });
+        // ✅ Add required fields
+        studentData.schoolId = organizationId;
+        studentData.companyId = req.user.companyId;
+        studentData.createdBy = req.user.id;
+
+        // Check if student exists
+        const existingStudent = await Student.findOne({
+          student_id: studentData.student_id,
+          schoolId: organizationId
+        });
+
         if (existingStudent) {
+          // Update existing
           Object.assign(existingStudent, studentData);
           await existingStudent.save();
           results.updated++;
         } else {
-          const student = new Student({ ...studentData, has_photo: false, created_from_csv: true, csv_import_date: new Date() });
+          // Create new
+          const student = new Student(studentData);
           await student.save();
           results.created++;
         }
       } catch (error) {
         results.skipped++;
-        results.errors.push({ student_id: studentData.student_id, name: studentData.name, error: error.message });
+        results.errors.push({
+          student_id: studentData.student_id,
+          name: studentData.name,
+          error: error.message
+        });
+        console.error(`❌ Failed for ${studentData.student_id}:`, error.message);
       }
     }
 
-    res.json({ success: true, message: `Bulk import completed`, results });
+    res.json({
+      success: true,
+      message: `Bulk import completed: ${results.created} created, ${results.updated} updated, ${results.skipped} failed`,
+      results
+    });
+
   } catch (error) {
     console.error('❌ Bulk import error:', error);
     res.status(500).json({ success: false, error: error.message });
@@ -627,53 +835,108 @@ router.post('/bulk-import', uploadCSV.single('csv'), async (req, res) => {
 // ============================================
 router.post('/bulk-import-with-photos', uploadMixed.fields([{ name: 'csv', maxCount: 1 }, { name: 'photoZip', maxCount: 1 }]), async (req, res) => {
   try {
+    console.log('📦 Starting bulk import with photos...');
+
     if (!req.files || !req.files.csv) {
       return res.status(400).json({ success: false, error: 'CSV file is required' });
     }
 
-    const csvFile = req.files.csv[0];
-    const photoZipFile = req.files.photoZip ? req.files.photoZip[0] : null;
-    const students = await parseCSVFromBuffer(csvFile.buffer);
-    const studentsWithSchool = students.map(student => ({ ...student, schoolId: req.user.schoolId }));
+    // ✅ Get organizationId from request body
+    const { organizationId } = req.body;
 
-    let photoCloudinaryMap = {};
-    if (photoZipFile) {
-      photoCloudinaryMap = await extractAndUploadPhotosToCloudinary(photoZipFile.buffer);
+    if (!organizationId) {
+      return res.status(400).json({ success: false, error: 'organizationId is required' });
     }
 
-    const results = { total: studentsWithSchool.length, created: 0, updated: 0, skipped: 0, withPhotos: 0, errors: [] };
+    // ✅ Verify organization exists and user has access
+    const organization = await School.findOne({
+      _id: organizationId,
+      companyId: req.user.companyId
+    });
 
-    for (const studentData of studentsWithSchool) {
+    if (!organization) {
+      return res.status(404).json({ success: false, error: 'Organization not found' });
+    }
+
+    const csvFile = req.files.csv[0];
+    const photoZipFile = req.files.photoZip ? req.files.photoZip[0] : null;
+
+    // Parse CSV
+    const students = await parseCSVFromBuffer(csvFile.buffer);
+    console.log(`📊 Parsed ${students.length} records from CSV`);
+
+    // Extract and upload photos if ZIP provided
+    let photoCloudinaryMap = {};
+    if (photoZipFile) {
+      console.log('📦 Extracting and uploading photos from ZIP...');
+      photoCloudinaryMap = await extractAndUploadPhotosToCloudinary(photoZipFile.buffer);
+      console.log(`✅ Uploaded ${Object.keys(photoCloudinaryMap).length} photos`);
+    }
+
+    const results = {
+      total: students.length,
+      created: 0,
+      updated: 0,
+      skipped: 0,
+      withPhotos: 0,
+      errors: []
+    };
+
+    for (const studentData of students) {
       try {
+        // ✅ Add required fields
+        studentData.schoolId = organizationId;
+        studentData.companyId = req.user.companyId;
+        studentData.createdBy = req.user.id;
+
         const cloudinaryPhoto = photoCloudinaryMap[studentData.student_id];
-        const studentUpdate = { ...studentData, created_from_csv: true, csv_import_date: new Date() };
 
         if (cloudinaryPhoto) {
-          studentUpdate.photo_url = cloudinaryPhoto.secure_url;
-          studentUpdate.photo_public_id = cloudinaryPhoto.public_id;
-          studentUpdate.photo_metadata = { width: cloudinaryPhoto.width, height: cloudinaryPhoto.height, format: cloudinaryPhoto.format, bytes: cloudinaryPhoto.bytes };
-          studentUpdate.has_photo = true;
-          studentUpdate.photo_uploaded_at = new Date();
+          studentData.photo_url = cloudinaryPhoto.secure_url;
+          studentData.photo_public_id = cloudinaryPhoto.public_id;
+          studentData.photo_metadata = {
+            width: cloudinaryPhoto.width,
+            height: cloudinaryPhoto.height,
+            format: cloudinaryPhoto.format,
+            bytes: cloudinaryPhoto.bytes
+          };
+          studentData.has_photo = true;
+          studentData.photo_uploaded_at = new Date();
           results.withPhotos++;
         }
 
-        const existingStudent = await Student.findOne({ student_id: studentData.student_id });
+        const existingStudent = await Student.findOne({
+          student_id: studentData.student_id,
+          schoolId: organizationId
+        });
+
         if (existingStudent) {
-          Object.assign(existingStudent, studentUpdate);
+          Object.assign(existingStudent, studentData);
           await existingStudent.save();
           results.updated++;
         } else {
-          const student = new Student(studentUpdate);
+          const student = new Student(studentData);
           await student.save();
           results.created++;
         }
+
       } catch (error) {
         results.skipped++;
-        results.errors.push({ student_id: studentData.student_id, name: studentData.name, error: error.message });
+        results.errors.push({
+          student_id: studentData.student_id,
+          name: studentData.name,
+          error: error.message
+        });
+        console.error(`❌ Failed for ${studentData.student_id}:`, error.message);
       }
     }
 
-    res.json({ success: true, message: `Bulk import completed`, results });
+    res.json({
+      success: true,
+      message: `Bulk import completed: ${results.created} created, ${results.updated} updated, ${results.withPhotos} with photos`,
+      results
+    });
+
   } catch (error) {
     console.error('❌ Bulk import with photos error:', error);
     res.status(500).json({ success: false, error: error.message });

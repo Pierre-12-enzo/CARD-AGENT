@@ -126,6 +126,7 @@ const CardGeneration = () => {
 
             if (response.success) {
                 setStudents(response.students || []);
+                console.log(`✅ Loaded ${response.students?.length || 0} students`);
 
                 // Extract filter options from response if available
                 if (response.filterOptions) {
@@ -265,14 +266,22 @@ const CardGeneration = () => {
         // Clear previous batch filters
         setBatchFilters({ class: '', level: '', academic_year: '' });
 
-        // Load templates for this organization
         if (orgId) {
             await loadTemplates(orgId);
+            await loadOrgStudents();  // ✅ ADD THIS LINE
         } else {
             setTemplates([]);
             setSelectedTemplateId('');
         }
     };
+
+    // Load students when organization changes (in addition to handleOrgChange)
+    useEffect(() => {
+        if (selectedOrgId) {
+            loadOrgStudents();
+        }
+    }, [selectedOrgId]);
+
 
     const handleSingleStudentSelect = (studentId) => {
         const student = students.find(s => s._id === studentId);

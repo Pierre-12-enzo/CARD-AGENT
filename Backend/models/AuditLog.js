@@ -55,7 +55,7 @@ const auditLogSchema = new mongoose.Schema({
 
             // Student management
             'CREATE_STUDENT', 'UPDATE_STUDENT', 'DELETE_STUDENT', 'BULK_CREATE_STUDENTS',
-            'IMPORT_STUDENTS_CSV', 'EXPORT_STUDENTS',
+            'IMPORT_STUDENTS_CSV', 'EXPORT_STUDENTS', 'BULK_DELETE_STUDENTS',
 
             // Card management
             'GENERATE_CARD', 'UPDATE_CARD', 'DELETE_CARD', 'BULK_GENERATE_CARDS',
