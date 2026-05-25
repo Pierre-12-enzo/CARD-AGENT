@@ -341,9 +341,39 @@ export const cardAPI = {
     return response.data;
   },
 
+  // Preview validation before batch generation
+  previewValidation: async (data) => {
+    const response = await api.post('/card/preview-validation', data);
+    return response.data;
+  },
+
+  // Update template fields after mapping
+  updateTemplateFields: async (templateId, fields) => {
+    const response = await api.put(`/card/template/${templateId}/fields`, { fields });
+    return response.data;
+  },
+
+  // Get template by ID with fields
+  getTemplate: async (templateId) => {
+    const response = await api.get(`/templates/${templateId}`);
+    return response.data;
+  },
+
   generateSingle: async (data) => {
     const response = await api.post('/card/generate-single-card', data, {
       responseType: 'blob'
+    });
+    return response.data;
+  },
+
+  generateBatchFromDB: async (data) => {
+    const response = await api.post('/card/generate-batch-from-db', data, {
+      responseType: 'blob',
+      timeout: 600000, // 10 minutes
+      onDownloadProgress: (progressEvent) => {
+        // Optional: track download progress
+        console.log('Download progress:', progressEvent);
+      }
     });
     return response.data;
   },
@@ -375,12 +405,21 @@ export const cardAPI = {
   },
 
   getCardHistory: async (params = {}) => {
-    const response = await api.get('/card/history', { params });
+    const response = await api.get('/card-history', { params });
     return response.data;
   },
 
-  getStudentCardHistory: async (studentId) => {
-    const response = await api.get(`/card/history/student/${studentId}`);
+  getPersonCardHistory: async (personId, params = {}) => {
+    const response = await api.get(`/card-history/person/${personId}`, { params });
+    return response.data;
+  },
+
+  getCardStatistics: async (params = {}) => {
+    const response = await api.get('/card-history/statistics', { params });
+    return response.data;
+  },
+  getRecentActivity: async (params = {}) => {
+    const response = await api.get('/card-history/recent', { params });
     return response.data;
   }
 };

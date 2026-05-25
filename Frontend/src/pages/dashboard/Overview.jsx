@@ -23,16 +23,19 @@ const Overview = () => {
     return () => clearInterval(timer);
   }, []);
 
+  // In Overview.jsx, update the fetchDashboardData function
+
   const fetchDashboardData = async (isRefreshing = false) => {
     if (isRefreshing) setRefreshing(true);
     else setLoading(true);
 
     try {
-      const [companyRes, groupedRes, cardsRes, coWorkersRes] = await Promise.allSettled([
+      const [companyRes, groupedRes, cardsRes, coWorkersRes, historyStatsRes] = await Promise.allSettled([
         companyAPI.getDashboard(),
         studentAPI.getGroupedByOrganization(),
-        cardAPI.getCardHistory(),
-        coWorkerAPI.getAll({ limit: 100 })
+        cardAPI.getCardHistory({ limit: 10 }),  // ✅ Using API method
+        coWorkerAPI.getAll({ limit: 100 }),
+        cardAPI.getCardStatistics()  // ✅ Using API method instead of fetch
       ]);
 
       // Organizations & People from grouped data
@@ -75,10 +78,28 @@ const Overview = () => {
         }
       }
 
-      // Cards
+      // Cards from history statistics (REAL DATA)
+      let totalCardsGenerated = cardsGenerated; // fallback
+      let successfulCards = 0;
+      let failedCards = 0;
+      let uniquePeopleCount = 0;
+      let dailyStats = [];
+
+      if (historyStatsRes.status === 'fulfilled' && historyStatsRes.value?.success) {
+        const historyStats = historyStatsRes.value;
+        totalCardsGenerated = historyStats.stats?.totalCards || cardsGenerated;
+        successfulCards = historyStats.stats?.successfulCards || 0;
+        failedCards = historyStats.stats?.failedCards || 0;
+        uniquePeopleCount = historyStats.stats?.uniquePeopleCount || 0;
+        dailyStats = historyStats.dailyStats || [];
+      }
+
+      // Cards from card history list
       let recentCards = 0;
+      let recentCardList = [];
       if (cardsRes.status === 'fulfilled' && cardsRes.value?.success) {
-        recentCards = cardsRes.value.statistics?.totalCards || cardsGenerated;
+        recentCards = cardsRes.value.history?.length || 0;
+        recentCardList = cardsRes.value.history || [];
       }
 
       // Co-workers
@@ -90,19 +111,22 @@ const Overview = () => {
         coWorkerPending = list.filter(c => !c.lastLogin).length;
       }
 
-      // Calculate new this month
+      // Calculate new this month from card history
       const now = new Date();
       const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
       let newThisMonth = 0;
-      if (groupedRes.status === 'fulfilled') {
-        // Approximate from recent activity
+
+      if (recentCardList.length > 0) {
+        newThisMonth = recentCardList.filter(card => new Date(card.createdAt) >= firstDayOfMonth).length;
+      } else {
         newThisMonth = Math.max(0, Math.round(totalPeople * 0.15));
       }
 
-      // Recent Activity
+      // Recent Activity from card history
       const activity = [
         totalPeople > 0 && { type: 'people', action: 'Total Records', description: `${totalPeople} students & employees across ${orgTotal} organizations`, time: 'Current', icon: 'pi pi-users', color: 'slate' },
-        cardsGenerated > 0 && { type: 'card', action: 'Cards Generated', description: `${cardsGenerated} ID cards produced`, time: 'Total', icon: 'pi pi-qrcode', color: 'red' },
+        totalCardsGenerated > 0 && { type: 'card', action: 'Cards Generated', description: `${totalCardsGenerated} ID cards produced (${successfulCards} successful, ${failedCards} failed)`, time: 'Total', icon: 'pi pi-qrcode', color: 'red' },
+        uniquePeopleCount > 0 && { type: 'unique', action: 'Unique People', description: `${uniquePeopleCount} unique individuals have cards`, time: 'Total', icon: 'pi pi-user', color: 'green' },
         pendingCards > 0 && { type: 'pending', action: 'Pending Cards', description: `${pendingCards} cards yet to be generated`, time: 'Remaining', icon: 'pi pi-clock', color: 'amber' },
         coWorkerTotal > 0 && { type: 'staff', action: 'Team Members', description: `${coWorkerActive} active co-workers`, time: 'Active', icon: 'pi pi-user-plus', color: 'slate' },
         orgTotal > 0 && { type: 'org', action: 'Organizations', description: `${schoolsCount} schools, ${corporateCount} corporate clients`, time: 'Managed', icon: 'pi pi-building', color: 'red' },
@@ -112,10 +136,18 @@ const Overview = () => {
       setStats({
         organizations: { total: orgTotal, schools: schoolsCount, corporate: corporateCount },
         people: { total: totalPeople, students: totalStudents, employees: totalEmployees, newThisMonth, withPhotos },
-        cards: { generated: recentCards || cardsGenerated, pending: pendingCards, recentlyGenerated: recentCards },
+        cards: {
+          generated: totalCardsGenerated,
+          pending: pendingCards,
+          recentlyGenerated: newThisMonth,
+          successful: successfulCards,
+          failed: failedCards,
+          uniquePeople: uniquePeopleCount
+        },
         coWorkers: { total: coWorkerTotal, active: coWorkerActive, pending: coWorkerPending },
         recentActivity: activity.slice(0, 8),
-        orgBreakdown: orgBreakdown.slice(0, 5)
+        orgBreakdown: orgBreakdown.slice(0, 5),
+        recentCards: recentCardList.slice(0, 5) // Add recent cards for detailed view
       });
 
     } catch (error) {
@@ -328,8 +360,8 @@ const Overview = () => {
               {stats.recentActivity.map((activity, index) => (
                 <div key={index} className="flex items-center space-x-4 p-3 rounded-xl bg-slate-50 hover:bg-white transition-colors border border-slate-100">
                   <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${activity.color === 'red' ? 'bg-red-100 text-red-600' :
-                      activity.color === 'amber' ? 'bg-amber-100 text-amber-600' :
-                        'bg-slate-100 text-slate-600'
+                    activity.color === 'amber' ? 'bg-amber-100 text-amber-600' :
+                      'bg-slate-100 text-slate-600'
                     }`}>
                     <i className={`${activity.icon} text-sm`}></i>
                   </div>
@@ -430,8 +462,8 @@ const MetricCard = ({ title, value, subtitle, icon, gradient, link, detail }) =>
 const ActionCard = ({ title, description, icon, color, to }) => (
   <Link to={to}
     className={`w-full text-left p-4 rounded-xl border transition-all duration-300 group ${color === 'red'
-        ? 'bg-red-50/50 border-red-200 hover:bg-red-50 hover:border-red-300 hover:shadow-lg'
-        : 'bg-slate-50/50 border-slate-200 hover:bg-slate-50 hover:border-slate-300 hover:shadow-lg'
+      ? 'bg-red-50/50 border-red-200 hover:bg-red-50 hover:border-red-300 hover:shadow-lg'
+      : 'bg-slate-50/50 border-slate-200 hover:bg-slate-50 hover:border-slate-300 hover:shadow-lg'
       }`}>
     <div className="flex items-center space-x-3">
       <div className={`w-10 h-10 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform duration-300 ${color === 'red' ? 'bg-red-600 text-white' : 'bg-slate-700 text-white'

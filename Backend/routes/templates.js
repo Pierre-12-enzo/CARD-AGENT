@@ -58,6 +58,7 @@ router.get('/', async (req, res) => {
       .populate('schoolId', 'name type')
       .sort({ isDefault: -1, createdAt: -1 });
 
+    // Update the mapping in GET / endpoint to include fields
     const templatesWithUrls = templates.map(template => {
       const templateObj = template.toObject();
       return {
@@ -70,7 +71,11 @@ router.get('/', async (req, res) => {
           cloudinary.url(templateObj.backSide.public_id, {
             width: 400, height: 300, crop: 'fill', quality: 'auto'
           }) : null,
-        templateType: templateObj.templateType || (templateObj.backSide ? 'two-sided' : 'single-sided')
+        templateType: templateObj.templateType || (templateObj.backSide ? 'two-sided' : 'single-sided'),
+        // ✅ ADD THIS LINE to include fields in list response
+        fields: templateObj.fields || [],
+        originalWidth: templateObj.originalWidth,
+        originalHeight: templateObj.originalHeight
       };
     });
 
@@ -82,7 +87,78 @@ router.get('/', async (req, res) => {
   }
 });
 
-// UPLOAD template (assigned to an organization)
+// Helper function to get default fields based on template type
+const getDefaultFields = (templateType) => {
+  const defaultFields = [
+    {
+      name: "photo",
+      label: "Photo",
+      type: "photo",
+      requirement: "optional",
+      position: { x: 50, y: 230, width: 250, height: 250, fontSize: 22, isBold: false, textAlign: "left" }
+    },
+    {
+      name: "name",
+      label: "Full Name",
+      type: "text",
+      requirement: "required",
+      position: { x: 580, y: 225, maxWidth: 500, fontSize: 22, isBold: true, textAlign: "left" },
+      dataSource: { sourceType: "student_field", fieldPath: "name" }
+    },
+    {
+      name: "student_id",
+      label: "ID Number",
+      type: "text",
+      requirement: "required",
+      position: { x: 580, y: 475, maxWidth: 400, fontSize: 20, isBold: false, textAlign: "left" },
+      dataSource: { sourceType: "student_field", fieldPath: "student_id" }
+    },
+    {
+      name: "class",
+      label: "Class",
+      type: "text",
+      requirement: "optional",
+      position: { x: 580, y: 270, maxWidth: 300, fontSize: 20, isBold: false, textAlign: "left" },
+      dataSource: { sourceType: "student_field", fieldPath: "studentDetails.class" }
+    },
+    {
+      name: "level",
+      label: "Level",
+      type: "text",
+      requirement: "optional",
+      position: { x: 580, y: 320, maxWidth: 500, fontSize: 20, isBold: false, textAlign: "left" },
+      dataSource: { sourceType: "student_field", fieldPath: "studentDetails.level" }
+    },
+    {
+      name: "gender",
+      label: "Gender",
+      type: "text",
+      requirement: "optional",
+      position: { x: 580, y: 375, maxWidth: 300, fontSize: 18, isBold: false, textAlign: "left" },
+      dataSource: { sourceType: "student_field", fieldPath: "gender" }
+    },
+    {
+      name: "residence",
+      label: "Residence",
+      type: "text",
+      requirement: "optional",
+      position: { x: 620, y: 420, maxWidth: 300, fontSize: 18, isBold: false, textAlign: "left" },
+      dataSource: { sourceType: "student_field", fieldPath: "residence" }
+    },
+    {
+      name: "academic_year",
+      label: "Academic Year",
+      type: "text",
+      requirement: "optional",
+      position: { x: 670, y: 472, maxWidth: 300, fontSize: 18, isBold: false, textAlign: "left" },
+      dataSource: { sourceType: "student_field", fieldPath: "studentDetails.academic_year" }
+    }
+  ];
+
+  return defaultFields;
+};
+
+// UPLOAD template (UPDATED with default fields)
 router.post('/upload', upload.fields([
   { name: 'frontSide', maxCount: 1 },
   { name: 'backSide', maxCount: 1 }
@@ -128,6 +204,19 @@ router.post('/upload', upload.fields([
       throw new Error('Failed to upload front side');
     }
 
+    // Get template dimensions from uploaded image
+    let originalWidth = null;
+    let originalHeight = null;
+    try {
+      const { loadImage } = require('canvas');
+      const image = await loadImage(frontUpload.secure_url);
+      originalWidth = image.width;
+      originalHeight = image.height;
+      console.log(`📐 Template dimensions: ${originalWidth}x${originalHeight}`);
+    } catch (dimError) {
+      console.warn('Could not get image dimensions:', dimError.message);
+    }
+
     const templateData = {
       name,
       description: description || '',
@@ -139,8 +228,15 @@ router.post('/upload', upload.fields([
         filepath: frontUpload.secure_url,
         url: frontUpload.secure_url,
         secure_url: frontUpload.secure_url,
-        public_id: frontUpload.public_id
+        public_id: frontUpload.public_id,
+        width: originalWidth,
+        height: originalHeight
       },
+      // 🔥 ADD DEFAULT FIELDS
+      fields: getDefaultFields(actualTemplateType),
+      // Store original dimensions for scaling
+      originalWidth: originalWidth,
+      originalHeight: originalHeight,
       isDefault: setAsDefault === 'true' || setAsDefault === true
     };
 
@@ -176,13 +272,91 @@ router.post('/upload', upload.fields([
         _id: template._id,
         name: template.name,
         templateType: template.templateType,
-        organization: org.name
+        organization: org.name,
+        fieldsCount: template.fields?.length || 0
       }
     });
 
   } catch (error) {
     console.error('Upload error:', error);
     res.status(500).json({ success: false, error: error.message || 'Upload failed' });
+  }
+});
+
+// GET single template by ID
+router.get('/:id', async (req, res) => {
+  try {
+    const template = await Template.findOne({
+      _id: req.params.id,
+      companyId: req.user.companyId
+    }).populate('schoolId', 'name type');
+
+    if (!template) {
+      return res.status(404).json({ success: false, error: 'Template not found' });
+    }
+
+    // Co-worker permission check
+    if (req.user.role === 'co_worker') {
+      const orgPerm = req.user.permissions.find(
+        p => p.organizationId.toString() === template.schoolId._id.toString()
+      );
+      if (!orgPerm || !orgPerm.canGenerateCards) {
+        return res.status(403).json({ success: false, error: 'Access denied' });
+      }
+    }
+
+    const templateObj = template.toObject();
+    const response = {
+      success: true,
+      template: {
+        ...templateObj,
+        frontSideUrl: templateObj.frontSide?.public_id ?
+          cloudinary.url(templateObj.frontSide.public_id, {
+            width: 400, height: 300, crop: 'fill', quality: 'auto'
+          }) : null,
+        backSideUrl: templateObj.backSide?.public_id ?
+          cloudinary.url(templateObj.backSide.public_id, {
+            width: 400, height: 300, crop: 'fill', quality: 'auto'
+          }) : null,
+        // Ensure fields are included
+        fields: templateObj.fields || [],
+        // Include original dimensions for scaling
+        originalWidth: templateObj.originalWidth || templateObj.frontSide?.width,
+        originalHeight: templateObj.originalHeight || templateObj.frontSide?.height
+      }
+    };
+
+    res.json(response);
+
+  } catch (error) {
+    console.error('Error fetching template:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Also add a helper endpoint to add fields to existing templates
+router.post('/:id/add-default-fields', async (req, res) => {
+  try {
+    const template = await Template.findById(req.params.id);
+    if (!template) {
+      return res.status(404).json({ success: false, error: 'Template not found' });
+    }
+    if (template.companyId.toString() !== req.user.companyId.toString()) {
+      return res.status(403).json({ success: false, error: 'Access denied' });
+    }
+
+    // Only add fields if they don't exist
+    if (!template.fields || template.fields.length === 0) {
+      template.fields = getDefaultFields(template.templateType);
+      await template.save();
+      res.json({ success: true, message: 'Default fields added', fieldsCount: template.fields.length });
+    } else {
+      res.json({ success: true, message: 'Fields already exist', fieldsCount: template.fields.length });
+    }
+
+  } catch (error) {
+    console.error('Add fields error:', error);
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 

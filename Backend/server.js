@@ -210,8 +210,9 @@ app.use('/api/students', require('./routes/student'));
 app.use('/api/templates', require('./routes/templates'));
 app.use('/api/co-workers', require('./routes/co-worker.js'));
 app.use('/api/audit', require('./routes/audit'));
-app.use('/api/company', require('./routes/company'));
-app.use('/api/organizations', require('./routes/school'));
+app.use('/api/company', require('./routes/company.js'));
+app.use('/api/organizations', require('./routes/school.js'));
+app.use('/api/card-history', require('./routes/cardHistory.js'));
 
 // ==================== MONGOOSE CONNECTION ====================
 const uri = process.env.MONGO_URI;
