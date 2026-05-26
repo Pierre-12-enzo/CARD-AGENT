@@ -1,5 +1,4 @@
-// components/DynamicFieldMapper.jsx - COMPLETE REWRITE
-// Features: No duplicate keys, Add/Remove fields, Per-template field storage
+// components/DynamicFieldMapper.jsx - COMPLETE UPDATE
 import React, { useState, useEffect } from 'react';
 
 const DynamicFieldMapper = ({ template, students, onSave, onBack, initialMappings }) => {
@@ -9,74 +8,201 @@ const DynamicFieldMapper = ({ template, students, onSave, onBack, initialMapping
     const [newFieldName, setNewFieldName] = useState('');
     const [newFieldLabel, setNewFieldLabel] = useState('');
     const [newFieldType, setNewFieldType] = useState('text');
+    const [templateType, setTemplateType] = useState(template?.defaultPersonType || 'student');
+    const [showStylingPanel, setShowStylingPanel] = useState(null);
 
-    // Sample student for preview
     const sampleStudent = students?.find(s => s) || null;
 
-    // Available source fields from Student model
-    const availableDataSources = [
-        { label: 'Name', path: 'name', category: 'Basic', personType: 'both' },
-        { label: 'Student ID', path: 'student_id', category: 'Basic', personType: 'both' },
-        { label: 'Gender', path: 'gender', category: 'Basic', personType: 'both' },
-        { label: 'Residence', path: 'residence', category: 'Basic', personType: 'both' },
-        { label: 'Class', path: 'studentDetails.class', category: 'Student', personType: 'student' },
-        { label: 'Level', path: 'studentDetails.level', category: 'Student', personType: 'student' },
-        { label: 'Academic Year', path: 'studentDetails.academic_year', category: 'Student', personType: 'student' },
-        { label: 'Parent Phone', path: 'studentDetails.parent_phone', category: 'Student', personType: 'student' },
-        { label: 'Department', path: 'employeeDetails.department', category: 'Employee', personType: 'employee' },
-        { label: 'Position', path: 'employeeDetails.position', category: 'Employee', personType: 'employee' },
-        { label: 'Employee ID', path: 'employeeDetails.employeeId', category: 'Employee', personType: 'employee' },
-        { label: 'Work Phone', path: 'employeeDetails.workPhone', category: 'Employee', personType: 'employee' }
-    ];
+    // Available source fields based on template type
+    const getAvailableDataSources = () => {
+        const commonSources = [
+            { label: 'Name', path: 'name', category: 'Basic', personType: 'both' },
+            { label: 'Gender', path: 'gender', category: 'Basic', personType: 'both' },
+            { label: 'Residence', path: 'residence', category: 'Basic', personType: 'both' }
+        ];
 
-    // Initialize fields from template or create default
-    useEffect(() => {
-        if (template?.fields && template.fields.length > 0) {
-            // Use existing template fields
-            setFields(template.fields.map(f => ({
-                ...f,
-                uniqueId: f._id || `${f.name}-${Date.now()}-${Math.random()}`
-            })));
-        } else {
-            // Create default fields for new template
-            const defaultFields = [
+        const studentSources = [
+            { label: 'Student ID', path: 'student_id', category: 'Basic', personType: 'both' },
+            { label: 'Class', path: 'studentDetails.class', category: 'Student', personType: 'student' },
+            { label: 'Level', path: 'studentDetails.level', category: 'Student', personType: 'student' },
+            { label: 'Academic Year', path: 'studentDetails.academic_year', category: 'Student', personType: 'student' },
+            { label: 'Parent Phone', path: 'studentDetails.parent_phone', category: 'Student', personType: 'student' }
+        ];
+
+        const employeeSources = [
+            { label: 'Employee ID', path: 'employeeDetails.employeeId', category: 'Employee', personType: 'employee' },
+            { label: 'Department', path: 'employeeDetails.department', category: 'Employee', personType: 'employee' },
+            { label: 'Position', path: 'employeeDetails.position', category: 'Employee', personType: 'employee' },
+            { label: 'Work Phone', path: 'employeeDetails.workPhone', category: 'Employee', personType: 'employee' }
+        ];
+
+        if (templateType === 'student') {
+            return [...commonSources, ...studentSources];
+        } else if (templateType === 'employee') {
+            return [...commonSources, ...employeeSources];
+        }
+        return [...commonSources, ...studentSources, ...employeeSources];
+    };
+
+    const availableDataSources = getAvailableDataSources();
+
+    // Get default fields based on template type
+    const getDefaultFieldsForType = (type) => {
+        const basePosition = { x: 580, y: 225, maxWidth: 500, fontSize: 22, isBold: true };
+
+        if (type === 'student') {
+            return [
                 {
                     name: 'photo', label: 'Photo', type: 'photo', requirement: 'optional',
                     position: { x: 50, y: 230, width: 250, height: 250 },
+                    styling: {
+                        borderColor: '#005800',
+                        borderWidth: 3,
+                        borderRadius: 10,
+                        placeholderColor: '#10B981',
+                        placeholderBg: 'rgba(16, 185, 129, 0.05)',
+                        showCameraIcon: true,
+                        showPlaceholderText: true,
+                        noBorder: false
+                    },
+                    uniqueId: `photo-${Date.now()}`
+                },
+                {
+                    name: 'name', label: 'Full Name', type: 'text', requirement: 'required',
+                    position: { x: 580, y: 225, maxWidth: 500, fontSize: 22, isBold: true, textAlign: 'left' },
+                    dataSource: { sourceType: 'student_field', fieldPath: 'name' },
+                    uniqueId: `name-${Date.now()}`
+                },
+                {
+                    name: 'student_id', label: 'Student ID', type: 'text', requirement: 'required',
+                    position: { x: 580, y: 475, maxWidth: 400, fontSize: 20 },
+                    dataSource: { sourceType: 'student_field', fieldPath: 'student_id' },
+                    uniqueId: `student_id-${Date.now()}`
+                },
+                {
+                    name: 'class', label: 'Class', type: 'text', requirement: 'optional',
+                    position: { x: 580, y: 270, maxWidth: 300, fontSize: 20 },
+                    dataSource: { sourceType: 'student_field', fieldPath: 'studentDetails.class' },
+                    uniqueId: `class-${Date.now()}`
+                },
+                {
+                    name: 'level', label: 'Level', type: 'text', requirement: 'optional',
+                    position: { x: 580, y: 320, maxWidth: 500, fontSize: 20 },
+                    dataSource: { sourceType: 'student_field', fieldPath: 'studentDetails.level' },
+                    uniqueId: `level-${Date.now()}`
+                },
+                {
+                    name: 'gender', label: 'Gender', type: 'text', requirement: 'optional',
+                    position: { x: 580, y: 375, maxWidth: 300, fontSize: 18 },
+                    dataSource: { sourceType: 'student_field', fieldPath: 'gender' },
+                    uniqueId: `gender-${Date.now()}`
+                },
+                {
+                    name: 'residence', label: 'Residence', type: 'text', requirement: 'optional',
+                    position: { x: 620, y: 420, maxWidth: 300, fontSize: 18 },
+                    dataSource: { sourceType: 'student_field', fieldPath: 'residence' },
+                    uniqueId: `residence-${Date.now()}`
+                },
+                {
+                    name: 'academic_year', label: 'Academic Year', type: 'text', requirement: 'optional',
+                    position: { x: 670, y: 472, maxWidth: 300, fontSize: 18 },
+                    dataSource: { sourceType: 'student_field', fieldPath: 'studentDetails.academic_year' },
+                    uniqueId: `academic_year-${Date.now()}`
+                }
+            ];
+        } else {
+            // Employee template
+            return [
+                {
+                    name: 'photo', label: 'Photo', type: 'photo', requirement: 'optional',
+                    position: { x: 50, y: 230, width: 250, height: 250 },
+                    styling: {
+                        borderColor: '#1e293b',
+                        borderWidth: 3,
+                        borderRadius: 10,
+                        placeholderColor: '#64748b',
+                        placeholderBg: 'rgba(30, 41, 59, 0.05)',
+                        showCameraIcon: true,
+                        showPlaceholderText: true,
+                        noBorder: false
+                    },
                     uniqueId: `photo-${Date.now()}`
                 },
                 {
                     name: 'name', label: 'Full Name', type: 'text', requirement: 'required',
                     position: { x: 580, y: 225, maxWidth: 500, fontSize: 22, isBold: true },
-                    dataSource: { sourceType: 'student_field', fieldPath: 'name' },
+                    dataSource: { sourceType: 'employee_field', fieldPath: 'name' },
                     uniqueId: `name-${Date.now()}`
                 },
                 {
-                    name: 'student_id', label: 'ID Number', type: 'text', requirement: 'required',
+                    name: 'employee_id', label: 'Employee ID', type: 'text', requirement: 'required',
                     position: { x: 580, y: 475, maxWidth: 400, fontSize: 20 },
-                    dataSource: { sourceType: 'student_field', fieldPath: 'student_id' },
-                    uniqueId: `student_id-${Date.now()}`
+                    dataSource: { sourceType: 'employee_field', fieldPath: 'employeeDetails.employeeId' },
+                    uniqueId: `employee_id-${Date.now()}`
+                },
+                {
+                    name: 'department', label: 'Department', type: 'text', requirement: 'optional',
+                    position: { x: 580, y: 270, maxWidth: 400, fontSize: 20 },
+                    dataSource: { sourceType: 'employee_field', fieldPath: 'employeeDetails.department' },
+                    uniqueId: `department-${Date.now()}`
+                },
+                {
+                    name: 'position', label: 'Position', type: 'text', requirement: 'optional',
+                    position: { x: 580, y: 320, maxWidth: 400, fontSize: 20 },
+                    dataSource: { sourceType: 'employee_field', fieldPath: 'employeeDetails.position' },
+                    uniqueId: `position-${Date.now()}`
+                },
+                {
+                    name: 'gender', label: 'Gender', type: 'text', requirement: 'optional',
+                    position: { x: 580, y: 375, maxWidth: 300, fontSize: 18 },
+                    dataSource: { sourceType: 'employee_field', fieldPath: 'gender' },
+                    uniqueId: `gender-${Date.now()}`
+                },
+                {
+                    name: 'residence', label: 'Residence', type: 'text', requirement: 'optional',
+                    position: { x: 620, y: 420, maxWidth: 300, fontSize: 18 },
+                    dataSource: { sourceType: 'employee_field', fieldPath: 'residence' },
+                    uniqueId: `residence-${Date.now()}`
+                },
+                {
+                    name: 'work_phone', label: 'Work Phone', type: 'text', requirement: 'optional',
+                    position: { x: 580, y: 420, maxWidth: 300, fontSize: 18 },
+                    dataSource: { sourceType: 'employee_field', fieldPath: 'employeeDetails.workPhone' },
+                    uniqueId: `work_phone-${Date.now()}`
                 }
             ];
+        }
+    };
+
+    // Initialize fields from template or create default
+    useEffect(() => {
+        if (template?.fields && template.fields.length > 0) {
+            setFields(template.fields.map(f => ({
+                ...f,
+                uniqueId: f._id || `${f.name}-${Date.now()}-${Math.random()}`
+            })));
+            if (template.defaultPersonType) {
+                setTemplateType(template.defaultPersonType);
+            }
+        } else {
+            // New template - use selected type
+            const defaultFields = getDefaultFieldsForType(templateType);
             setFields(defaultFields);
         }
-    }, [template]);
+    }, [template, templateType]);
 
-    // Update a specific field
     const updateField = (uniqueId, updates) => {
         setFields(prev => prev.map(field =>
             field.uniqueId === uniqueId ? { ...field, ...updates } : field
         ));
     };
 
-    // Remove a field
     const removeField = (uniqueId) => {
         if (window.confirm('Remove this field from the template?')) {
             setFields(prev => prev.filter(field => field.uniqueId !== uniqueId));
         }
     };
 
-    // Add a new custom field
     const addNewField = () => {
         if (!newFieldName.trim()) {
             alert('Field name is required');
@@ -89,7 +215,19 @@ const DynamicFieldMapper = ({ template, students, onSave, onBack, initialMapping
             type: newFieldType,
             requirement: 'optional',
             position: { x: 100, y: 100, fontSize: 20, isBold: false },
-            dataSource: { sourceType: 'student_field', fieldPath: '' },
+            dataSource: { sourceType: templateType === 'student' ? 'student_field' : 'employee_field', fieldPath: '' },
+            ...(newFieldType === 'photo' && {
+                styling: {
+                    borderColor: templateType === 'student' ? '#005800' : '#1e293b',
+                    borderWidth: 3,
+                    borderRadius: 10,
+                    placeholderColor: templateType === 'student' ? '#10B981' : '#64748b',
+                    placeholderBg: templateType === 'student' ? 'rgba(16, 185, 129, 0.05)' : 'rgba(30, 41, 59, 0.05)',
+                    showCameraIcon: true,
+                    showPlaceholderText: true,
+                    noBorder: false
+                }
+            }),
             uniqueId: `new-${Date.now()}-${Math.random()}`
         };
 
@@ -100,31 +238,10 @@ const DynamicFieldMapper = ({ template, students, onSave, onBack, initialMapping
         setNewFieldType('text');
     };
 
-    // Get preview value for a field
     const getPreviewValue = (field) => {
         if (!sampleStudent) return '—';
-
-        if (field.type === 'photo') {
-            return sampleStudent.has_photo ? '📷 Has photo' : '📷 No photo';
-        }
-
-        if (field.dataSource?.sourceType === 'static') {
-            return field.dataSource.staticValue || '—';
-        }
-
-        if (field.dataSource?.sourceType === 'computed') {
-            let preview = field.dataSource.computedExpression || '';
-            availableDataSources.forEach(ds => {
-                const parts = ds.path.split('.');
-                let value = sampleStudent;
-                for (const part of parts) {
-                    value = value?.[part];
-                }
-                preview = preview.replace(new RegExp(`\\{${ds.path}\\}`, 'g'), value || '');
-            });
-            return preview || '—';
-        }
-
+        if (field.type === 'photo') return '📷 Photo Preview';
+        if (field.dataSource?.sourceType === 'static') return field.dataSource.staticValue || '—';
         if (field.dataSource?.fieldPath) {
             const parts = field.dataSource.fieldPath.split('.');
             let value = sampleStudent;
@@ -133,43 +250,86 @@ const DynamicFieldMapper = ({ template, students, onSave, onBack, initialMapping
             }
             return value || '—';
         }
-
         return '—';
     };
 
-    // Save all fields
     const handleSave = async () => {
         setSaving(true);
-        // Remove uniqueId before saving to database
-        const fieldsToSave = fields.map(({ uniqueId, ...field }) => field);
+        const fieldsToSave = fields.map(({ uniqueId, ...field }) => ({
+            ...field,
+            defaultPersonType: templateType
+        }));
         await onSave(fieldsToSave, fields);
         setSaving(false);
     };
 
-    // Separate fields by type
     const photoFields = fields.filter(f => f.type === 'photo');
     const textFields = fields.filter(f => f.type === 'text');
 
     return (
         <div className="space-y-6">
-            {/* Header */}
+            {/* Template Type Selector */}
+            <div className="bg-gradient-to-r from-slate-50 to-white p-4 rounded-xl border border-slate-200">
+                <div className="flex items-center gap-2 mb-3">
+                    <i className="pi pi-tag text-red-500"></i>
+                    <h4 className="font-semibold text-slate-800">Template Type</h4>
+                </div>
+                <p className="text-xs text-slate-500 mb-3">
+                    Select the default card type. This determines which data fields are available.
+                </p>
+                <div className="flex gap-3">
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setTemplateType('student');
+                            setFields(getDefaultFieldsForType('student'));
+                        }}
+                        className={`flex-1 p-3 rounded-xl border-2 transition-all ${templateType === 'student'
+                            ? 'border-red-500 bg-red-50 shadow-md'
+                            : 'border-slate-200 bg-white hover:border-red-200'}`}
+                    >
+                        <div className="flex items-center justify-center gap-2">
+                            <i className="pi pi-graduation-cap text-lg"></i>
+                            <span className="font-medium">Student Card</span>
+                        </div>
+                        <p className="text-xs text-slate-500 mt-1">ID, Class, Level, Academic Year</p>
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setTemplateType('employee');
+                            setFields(getDefaultFieldsForType('employee'));
+                        }}
+                        className={`flex-1 p-3 rounded-xl border-2 transition-all ${templateType === 'employee'
+                            ? 'border-red-500 bg-red-50 shadow-md'
+                            : 'border-slate-200 bg-white hover:border-red-200'}`}
+                    >
+                        <div className="flex items-center justify-center gap-2">
+                            <i className="pi pi-briefcase text-lg"></i>
+                            <span className="font-medium">Employee Card</span>
+                        </div>
+                        <p className="text-xs text-slate-500 mt-1">ID, Department, Position, Work Phone</p>
+                    </button>
+                </div>
+            </div>
+
+            {/* Header Info */}
             <div className="bg-blue-50 p-4 rounded-xl border border-blue-200">
                 <div className="flex items-center gap-2 mb-2">
                     <i className="pi pi-info-circle text-blue-600"></i>
-                    <h4 className="font-semibold text-blue-800">Field Mapping</h4>
+                    <h4 className="font-semibold text-blue-800">Field Mapping - {templateType === 'student' ? 'Student' : 'Employee'} Template</h4>
                 </div>
                 <p className="text-sm text-blue-600">
-                    Define which fields appear on this template and connect them to data sources.
-                    Required fields must have data or students will be skipped.
+                    Define which fields appear on this template. Required fields must have data or cards will be skipped.
                 </p>
             </div>
 
-            {/* Photo Fields Section */}
+            {/* Photo Fields Section with Styling */}
             {photoFields.length > 0 && (
                 <div className="space-y-3">
                     <div className="flex justify-between items-center">
                         <h4 className="font-medium text-slate-700 flex items-center gap-2">
-                            <i className="pi pi-image text-purple-500"></i> Photo Fields
+                            <i className="pi pi-image text-purple-500"></i> Photo Fields ({photoFields.length})
                         </h4>
                         <button
                             onClick={() => {
@@ -179,7 +339,17 @@ const DynamicFieldMapper = ({ template, students, onSave, onBack, initialMapping
                                     type: 'photo',
                                     requirement: 'optional',
                                     position: { x: 50, y: 230, width: 250, height: 250 },
-                                    uniqueId: `photo-${Date.now()}`
+                                    styling: {
+                                        borderColor: templateType === 'student' ? '#005800' : '#1e293b',
+                                        borderWidth: 3,
+                                        borderRadius: 10,
+                                        placeholderColor: templateType === 'student' ? '#10B981' : '#64748b',
+                                        placeholderBg: templateType === 'student' ? 'rgba(16, 185, 129, 0.05)' : 'rgba(30, 41, 59, 0.05)',
+                                        showCameraIcon: true,
+                                        showPlaceholderText: true,
+                                        noBorder: false
+                                    },
+                                    uniqueId: `photo-${Date.now()}-${Math.random()}`
                                 };
                                 setFields(prev => [...prev, newPhotoField]);
                             }}
@@ -195,10 +365,16 @@ const DynamicFieldMapper = ({ template, students, onSave, onBack, initialMapping
                                 <div>
                                     <label className="font-semibold text-slate-800">{field.label}</label>
                                     <p className="text-xs text-slate-500">
-                                        Position: ({field.position?.x || 0}, {field.position?.y || 0})
+                                        Position: ({field.position?.x || 0}, {field.position?.y || 0}) • {field.position?.width || 250}x{field.position?.height || 250}
                                     </p>
                                 </div>
                                 <div className="flex gap-2">
+                                    <button
+                                        onClick={() => setShowStylingPanel(showStylingPanel === field.uniqueId ? null : field.uniqueId)}
+                                        className="text-xs px-2 py-1 bg-white border rounded-lg hover:bg-slate-50"
+                                    >
+                                        <i className="pi pi-palette mr-1"></i> Styling
+                                    </button>
                                     <select
                                         value={field.requirement || 'optional'}
                                         onChange={(e) => updateField(field.uniqueId, { requirement: e.target.value })}
@@ -207,39 +383,147 @@ const DynamicFieldMapper = ({ template, students, onSave, onBack, initialMapping
                                         <option value="required">Required</option>
                                         <option value="optional">Optional</option>
                                     </select>
-                                    <button
-                                        onClick={() => removeField(field.uniqueId)}
-                                        className="text-red-500 hover:text-red-700 text-sm"
-                                    >
+                                    <button onClick={() => removeField(field.uniqueId)} className="text-red-500 hover:text-red-700 text-sm">
                                         <i className="pi pi-trash"></i>
                                     </button>
                                 </div>
                             </div>
-                            <div className="text-sm text-slate-600">
-                                📸 Student photo will be placed here automatically
-                            </div>
-                            {sampleStudent && !sampleStudent.has_photo && (
-                                <div className="mt-2 text-xs text-amber-600 flex items-center gap-1">
-                                    <i className="pi pi-exclamation-triangle"></i>
-                                    Sample student has no photo
+
+                            {/* Photo Styling Panel */}
+                            {showStylingPanel === field.uniqueId && (
+                                <div className="mt-3 p-4 bg-white rounded-lg border border-slate-200 shadow-sm">
+                                    <p className="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-2">
+                                        <i className="pi pi-palette text-purple-500"></i>
+                                        Photo Frame Customization
+                                    </p>
+                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                        <div>
+                                            <label className="text-xs text-slate-500 block mb-1">Border Color</label>
+                                            <input
+                                                type="color"
+                                                value={field.styling?.borderColor || '#005800'}
+                                                onChange={(e) => updateField(field.uniqueId, {
+                                                    styling: { ...field.styling, borderColor: e.target.value }
+                                                })}
+                                                className="w-full h-9 border rounded cursor-pointer"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="text-xs text-slate-500 block mb-1">Border Width</label>
+                                            <input
+                                                type="number"
+                                                value={field.styling?.borderWidth || 3}
+                                                onChange={(e) => updateField(field.uniqueId, {
+                                                    styling: { ...field.styling, borderWidth: parseInt(e.target.value) || 0 }
+                                                })}
+                                                className="w-full px-2 py-1.5 border rounded text-sm"
+                                                min="0"
+                                                max="10"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="text-xs text-slate-500 block mb-1">Border Radius</label>
+                                            <input
+                                                type="number"
+                                                value={field.styling?.borderRadius || 10}
+                                                onChange={(e) => updateField(field.uniqueId, {
+                                                    styling: { ...field.styling, borderRadius: parseInt(e.target.value) || 0 }
+                                                })}
+                                                className="w-full px-2 py-1.5 border rounded text-sm"
+                                                min="0"
+                                                max="50"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="text-xs text-slate-500 block mb-1">Icon/Text Color</label>
+                                            <input
+                                                type="color"
+                                                value={field.styling?.placeholderColor || '#10B981'}
+                                                onChange={(e) => updateField(field.uniqueId, {
+                                                    styling: { ...field.styling, placeholderColor: e.target.value }
+                                                })}
+                                                className="w-full h-9 border rounded cursor-pointer"
+                                            />
+                                        </div>
+                                    </div>
+                                    <div className="flex flex-wrap gap-4 mt-3 pt-2 border-t border-slate-100">
+                                        <label className="flex items-center gap-2 text-sm">
+                                            <input
+                                                type="checkbox"
+                                                checked={field.styling?.showCameraIcon !== false}
+                                                onChange={(e) => updateField(field.uniqueId, {
+                                                    styling: { ...field.styling, showCameraIcon: e.target.checked }
+                                                })}
+                                                className="w-4 h-4"
+                                            />
+                                            <span className="text-slate-600">Show Camera Icon</span>
+                                        </label>
+                                        <label className="flex items-center gap-2 text-sm">
+                                            <input
+                                                type="checkbox"
+                                                checked={field.styling?.showPlaceholderText !== false}
+                                                onChange={(e) => updateField(field.uniqueId, {
+                                                    styling: { ...field.styling, showPlaceholderText: e.target.checked }
+                                                })}
+                                                className="w-4 h-4"
+                                            />
+                                            <span className="text-slate-600">Show "Add Photo" Text</span>
+                                        </label>
+                                        <label className="flex items-center gap-2 text-sm">
+                                            <input
+                                                type="checkbox"
+                                                checked={field.styling?.noBorder === true}
+                                                onChange={(e) => updateField(field.uniqueId, {
+                                                    styling: { ...field.styling, noBorder: e.target.checked, borderWidth: e.target.checked ? 0 : (field.styling?.borderWidth || 3) }
+                                                })}
+                                                className="w-4 h-4"
+                                            />
+                                            <span className="text-slate-600">No Border (for templates with existing frame)</span>
+                                        </label>
+                                    </div>
+                                    {/* Live Preview */}
+                                    <div className="mt-3 p-3 bg-slate-100 rounded-lg">
+                                        <p className="text-xs text-slate-500 mb-2">Preview:</p>
+                                        <div className="flex items-center gap-3">
+                                            <div
+                                                className="relative bg-white rounded flex items-center justify-center"
+                                                style={{
+                                                    width: Math.min(80, field.position?.width || 80),
+                                                    height: Math.min(80, field.position?.height || 80),
+                                                    border: !field.styling?.noBorder && field.styling?.borderWidth > 0 ? `${field.styling?.borderWidth || 3}px solid ${field.styling?.borderColor || '#005800'}` : 'none',
+                                                    borderRadius: `${field.styling?.borderRadius || 10}px`,
+                                                    backgroundColor: field.styling?.placeholderBg || 'rgba(16, 185, 129, 0.05)'
+                                                }}
+                                            >
+                                                {field.styling?.showCameraIcon !== false && (
+                                                    <span style={{ fontSize: '24px', color: field.styling?.placeholderColor || '#10B981' }}>📷</span>
+                                                )}
+                                            </div>
+                                            <div className="text-xs text-slate-500">
+                                                {field.styling?.noBorder ? 'No border' : `${field.styling?.borderWidth || 3}px ${field.styling?.borderColor || '#005800'}`}<br />
+                                                Radius: {field.styling?.borderRadius || 10}px
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
                             )}
+
+                            <div className="text-sm text-slate-600 mt-2">
+                                📸 Student/Employee photo will be placed here
+                            </div>
                         </div>
                     ))}
                 </div>
             )}
 
-            {/* Text Fields Section */}
+            {/* Text Fields Section - Same as before */}
             {textFields.length > 0 && (
                 <div className="space-y-3">
                     <div className="flex justify-between items-center">
                         <h4 className="font-medium text-slate-700 flex items-center gap-2">
                             <i className="pi pi-font text-blue-500"></i> Text Fields ({textFields.length})
                         </h4>
-                        <button
-                            onClick={() => setShowAddField(true)}
-                            className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1"
-                        >
+                        <button onClick={() => setShowAddField(true)} className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1">
                             <i className="pi pi-plus"></i> Add Custom Field
                         </button>
                     </div>
@@ -256,9 +540,7 @@ const DynamicFieldMapper = ({ template, students, onSave, onBack, initialMapping
                                             className="font-semibold text-slate-800 border-b border-transparent hover:border-slate-300 focus:border-blue-500 outline-none"
                                             placeholder="Field Label"
                                         />
-                                        <p className="text-xs text-slate-500">
-                                            Internal name: {field.name}
-                                        </p>
+                                        <p className="text-xs text-slate-500">Internal name: {field.name}</p>
                                     </div>
                                     <div className="flex gap-2">
                                         <select
@@ -270,16 +552,12 @@ const DynamicFieldMapper = ({ template, students, onSave, onBack, initialMapping
                                             <option value="optional">Optional</option>
                                             <option value="conditional">Conditional</option>
                                         </select>
-                                        <button
-                                            onClick={() => removeField(field.uniqueId)}
-                                            className="text-red-500 hover:text-red-700 text-sm"
-                                        >
+                                        <button onClick={() => removeField(field.uniqueId)} className="text-red-500 hover:text-red-700 text-sm">
                                             <i className="pi pi-trash"></i>
                                         </button>
                                     </div>
                                 </div>
 
-                                {/* Conditional rule */}
                                 {field.requirement === 'conditional' && (
                                     <div className="mb-3 p-2 bg-amber-50 rounded-lg flex gap-2">
                                         <select
@@ -306,61 +584,29 @@ const DynamicFieldMapper = ({ template, students, onSave, onBack, initialMapping
                                     </div>
                                 )}
 
-                                {/* Position inputs */}
                                 <div className="grid grid-cols-4 gap-2 mb-3">
                                     <div>
                                         <label className="text-xs text-slate-500">X</label>
-                                        <input
-                                            type="number"
-                                            value={field.position?.x || 0}
-                                            onChange={(e) => updateField(field.uniqueId, {
-                                                position: { ...field.position, x: parseInt(e.target.value) || 0 }
-                                            })}
-                                            className="w-full px-2 py-1 border rounded text-sm"
-                                        />
+                                        <input type="number" value={field.position?.x || 0} onChange={(e) => updateField(field.uniqueId, { position: { ...field.position, x: parseInt(e.target.value) || 0 } })} className="w-full px-2 py-1 border rounded text-sm" />
                                     </div>
                                     <div>
                                         <label className="text-xs text-slate-500">Y</label>
-                                        <input
-                                            type="number"
-                                            value={field.position?.y || 0}
-                                            onChange={(e) => updateField(field.uniqueId, {
-                                                position: { ...field.position, y: parseInt(e.target.value) || 0 }
-                                            })}
-                                            className="w-full px-2 py-1 border rounded text-sm"
-                                        />
+                                        <input type="number" value={field.position?.y || 0} onChange={(e) => updateField(field.uniqueId, { position: { ...field.position, y: parseInt(e.target.value) || 0 } })} className="w-full px-2 py-1 border rounded text-sm" />
                                     </div>
                                     <div>
                                         <label className="text-xs text-slate-500">Font Size</label>
-                                        <input
-                                            type="number"
-                                            value={field.position?.fontSize || 20}
-                                            onChange={(e) => updateField(field.uniqueId, {
-                                                position: { ...field.position, fontSize: parseInt(e.target.value) || 20 }
-                                            })}
-                                            className="w-full px-2 py-1 border rounded text-sm"
-                                        />
+                                        <input type="number" value={field.position?.fontSize || 20} onChange={(e) => updateField(field.uniqueId, { position: { ...field.position, fontSize: parseInt(e.target.value) || 20 } })} className="w-full px-2 py-1 border rounded text-sm" />
                                     </div>
                                     <div className="flex items-center gap-2 pt-5">
                                         <label className="text-xs text-slate-500">Bold</label>
-                                        <input
-                                            type="checkbox"
-                                            checked={field.position?.isBold || false}
-                                            onChange={(e) => updateField(field.uniqueId, {
-                                                position: { ...field.position, isBold: e.target.checked }
-                                            })}
-                                            className="w-4 h-4"
-                                        />
+                                        <input type="checkbox" checked={field.position?.isBold || false} onChange={(e) => updateField(field.uniqueId, { position: { ...field.position, isBold: e.target.checked } })} className="w-4 h-4" />
                                     </div>
                                 </div>
 
-                                {/* Data source selector */}
                                 <div className="grid grid-cols-2 gap-3">
                                     <select
-                                        value={field.dataSource?.sourceType || 'student_field'}
-                                        onChange={(e) => updateField(field.uniqueId, {
-                                            dataSource: { sourceType: e.target.value, fieldPath: '', staticValue: '', computedExpression: '' }
-                                        })}
+                                        value={field.dataSource?.sourceType || (templateType === 'student' ? 'student_field' : 'employee_field')}
+                                        onChange={(e) => updateField(field.uniqueId, { dataSource: { sourceType: e.target.value, fieldPath: '', staticValue: '', computedExpression: '' } })}
                                         className="px-3 py-2 border rounded-lg text-sm"
                                     >
                                         <option value="student_field">From Student Data</option>
@@ -370,44 +616,19 @@ const DynamicFieldMapper = ({ template, students, onSave, onBack, initialMapping
                                     </select>
 
                                     {field.dataSource?.sourceType === 'static' ? (
-                                        <input
-                                            type="text"
-                                            placeholder="Enter static value"
-                                            value={field.dataSource?.staticValue || ''}
-                                            onChange={(e) => updateField(field.uniqueId, {
-                                                dataSource: { ...field.dataSource, staticValue: e.target.value }
-                                            })}
-                                            className="px-3 py-2 border rounded-lg text-sm"
-                                        />
+                                        <input type="text" placeholder="Enter static value" value={field.dataSource?.staticValue || ''} onChange={(e) => updateField(field.uniqueId, { dataSource: { ...field.dataSource, staticValue: e.target.value } })} className="px-3 py-2 border rounded-lg text-sm" />
                                     ) : field.dataSource?.sourceType === 'computed' ? (
-                                        <input
-                                            type="text"
-                                            placeholder='e.g., "Class: {studentDetails.class}"'
-                                            value={field.dataSource?.computedExpression || ''}
-                                            onChange={(e) => updateField(field.uniqueId, {
-                                                dataSource: { ...field.dataSource, computedExpression: e.target.value }
-                                            })}
-                                            className="px-3 py-2 border rounded-lg text-sm"
-                                        />
+                                        <input type="text" placeholder='e.g., "Class: {studentDetails.class}"' value={field.dataSource?.computedExpression || ''} onChange={(e) => updateField(field.uniqueId, { dataSource: { ...field.dataSource, computedExpression: e.target.value } })} className="px-3 py-2 border rounded-lg text-sm" />
                                     ) : (
-                                        <select
-                                            value={field.dataSource?.fieldPath || ''}
-                                            onChange={(e) => updateField(field.uniqueId, {
-                                                dataSource: { ...field.dataSource, fieldPath: e.target.value }
-                                            })}
-                                            className="px-3 py-2 border rounded-lg text-sm"
-                                        >
+                                        <select value={field.dataSource?.fieldPath || ''} onChange={(e) => updateField(field.uniqueId, { dataSource: { ...field.dataSource, fieldPath: e.target.value } })} className="px-3 py-2 border rounded-lg text-sm">
                                             <option value="">Select data source...</option>
                                             {availableDataSources.map(ds => (
-                                                <option key={ds.path} value={ds.path}>
-                                                    {ds.label} ({ds.category})
-                                                </option>
+                                                <option key={ds.path} value={ds.path}>{ds.label} ({ds.category})</option>
                                             ))}
                                         </select>
                                     )}
                                 </div>
 
-                                {/* Preview */}
                                 {sampleStudent && (
                                     <div className="mt-3 text-xs bg-slate-50 p-2 rounded-lg">
                                         <span className="text-slate-500">Preview: </span>
@@ -426,42 +647,16 @@ const DynamicFieldMapper = ({ template, students, onSave, onBack, initialMapping
                     <div className="bg-white rounded-xl p-6 w-96">
                         <h3 className="text-lg font-bold mb-4">Add Custom Field</h3>
                         <div className="space-y-3">
-                            <input
-                                type="text"
-                                placeholder="Field Name (e.g., parent_name)"
-                                value={newFieldName}
-                                onChange={(e) => setNewFieldName(e.target.value)}
-                                className="w-full px-3 py-2 border rounded-lg"
-                            />
-                            <input
-                                type="text"
-                                placeholder="Display Label (e.g., Parent Name)"
-                                value={newFieldLabel}
-                                onChange={(e) => setNewFieldLabel(e.target.value)}
-                                className="w-full px-3 py-2 border rounded-lg"
-                            />
-                            <select
-                                value={newFieldType}
-                                onChange={(e) => setNewFieldType(e.target.value)}
-                                className="w-full px-3 py-2 border rounded-lg"
-                            >
+                            <input type="text" placeholder="Field Name (e.g., parent_name)" value={newFieldName} onChange={(e) => setNewFieldName(e.target.value)} className="w-full px-3 py-2 border rounded-lg" />
+                            <input type="text" placeholder="Display Label (e.g., Parent Name)" value={newFieldLabel} onChange={(e) => setNewFieldLabel(e.target.value)} className="w-full px-3 py-2 border rounded-lg" />
+                            <select value={newFieldType} onChange={(e) => setNewFieldType(e.target.value)} className="w-full px-3 py-2 border rounded-lg">
                                 <option value="text">Text Field</option>
                                 <option value="photo">Photo Field</option>
                             </select>
                         </div>
                         <div className="flex gap-3 mt-6">
-                            <button
-                                onClick={() => setShowAddField(false)}
-                                className="flex-1 px-4 py-2 border rounded-lg"
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                onClick={addNewField}
-                                className="flex-1 bg-blue-600 text-white py-2 rounded-lg"
-                            >
-                                Add Field
-                            </button>
+                            <button onClick={() => setShowAddField(false)} className="flex-1 px-4 py-2 border rounded-lg">Cancel</button>
+                            <button onClick={addNewField} className="flex-1 bg-blue-600 text-white py-2 rounded-lg">Add Field</button>
                         </div>
                     </div>
                 </div>
@@ -469,17 +664,10 @@ const DynamicFieldMapper = ({ template, students, onSave, onBack, initialMapping
 
             {/* Action buttons */}
             <div className="flex gap-3 pt-4 border-t">
-                <button
-                    onClick={onBack}
-                    className="flex-1 px-4 py-3 border border-slate-300 rounded-xl text-slate-700 font-medium hover:bg-slate-50"
-                >
+                <button onClick={onBack} className="flex-1 px-4 py-3 border border-slate-300 rounded-xl text-slate-700 font-medium hover:bg-slate-50">
                     <i className="pi pi-arrow-left mr-2"></i> Back
                 </button>
-                <button
-                    onClick={handleSave}
-                    disabled={saving}
-                    className="flex-1 bg-gradient-to-r from-red-600 to-red-500 text-white py-3 rounded-xl font-medium hover:from-red-700 hover:to-red-600 disabled:opacity-50"
-                >
+                <button onClick={handleSave} disabled={saving} className="flex-1 bg-gradient-to-r from-red-600 to-red-500 text-white py-3 rounded-xl font-medium hover:from-red-700 hover:to-red-600 disabled:opacity-50">
                     {saving ? <><i className="pi pi-spinner pi-spin mr-2"></i>Saving...</> : <><i className="pi pi-save mr-2"></i>Save Template Fields</>}
                 </button>
             </div>

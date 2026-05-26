@@ -88,74 +88,167 @@ router.get('/', async (req, res) => {
 });
 
 // Helper function to get default fields based on template type
-const getDefaultFields = (templateType) => {
-  const defaultFields = [
-    {
-      name: "photo",
-      label: "Photo",
-      type: "photo",
-      requirement: "optional",
-      position: { x: 50, y: 230, width: 250, height: 250, fontSize: 22, isBold: false, textAlign: "left" }
-    },
-    {
-      name: "name",
-      label: "Full Name",
-      type: "text",
-      requirement: "required",
-      position: { x: 580, y: 225, maxWidth: 500, fontSize: 22, isBold: true, textAlign: "left" },
-      dataSource: { sourceType: "student_field", fieldPath: "name" }
-    },
-    {
-      name: "student_id",
-      label: "ID Number",
-      type: "text",
-      requirement: "required",
-      position: { x: 580, y: 475, maxWidth: 400, fontSize: 20, isBold: false, textAlign: "left" },
-      dataSource: { sourceType: "student_field", fieldPath: "student_id" }
-    },
-    {
-      name: "class",
-      label: "Class",
-      type: "text",
-      requirement: "optional",
-      position: { x: 580, y: 270, maxWidth: 300, fontSize: 20, isBold: false, textAlign: "left" },
-      dataSource: { sourceType: "student_field", fieldPath: "studentDetails.class" }
-    },
-    {
-      name: "level",
-      label: "Level",
-      type: "text",
-      requirement: "optional",
-      position: { x: 580, y: 320, maxWidth: 500, fontSize: 20, isBold: false, textAlign: "left" },
-      dataSource: { sourceType: "student_field", fieldPath: "studentDetails.level" }
-    },
-    {
-      name: "gender",
-      label: "Gender",
-      type: "text",
-      requirement: "optional",
-      position: { x: 580, y: 375, maxWidth: 300, fontSize: 18, isBold: false, textAlign: "left" },
-      dataSource: { sourceType: "student_field", fieldPath: "gender" }
-    },
-    {
-      name: "residence",
-      label: "Residence",
-      type: "text",
-      requirement: "optional",
-      position: { x: 620, y: 420, maxWidth: 300, fontSize: 18, isBold: false, textAlign: "left" },
-      dataSource: { sourceType: "student_field", fieldPath: "residence" }
-    },
-    {
-      name: "academic_year",
-      label: "Academic Year",
-      type: "text",
-      requirement: "optional",
-      position: { x: 670, y: 472, maxWidth: 300, fontSize: 18, isBold: false, textAlign: "left" },
-      dataSource: { sourceType: "student_field", fieldPath: "studentDetails.academic_year" }
-    }
-  ];
+const getDefaultFields = (templateType = 'student') => {
+  const isStudent = templateType === 'student';
 
-  return defaultFields;
+  // Photo styling based on template type
+  const photoStyling = isStudent ? {
+    borderColor: '#005800',
+    borderWidth: 3,
+    borderRadius: 10,
+    placeholderColor: '#10B981',
+    placeholderBg: 'rgba(16, 185, 129, 0.05)',
+    showCameraIcon: true,
+    showPlaceholderText: true,
+    noBorder: false
+  } : {
+    borderColor: '#1e293b',
+    borderWidth: 3,
+    borderRadius: 10,
+    placeholderColor: '#64748b',
+    placeholderBg: 'rgba(30, 41, 59, 0.05)',
+    showCameraIcon: true,
+    showPlaceholderText: true,
+    noBorder: false
+  };
+
+  if (isStudent) {
+    // STUDENT TEMPLATE FIELDS
+    return [
+      {
+        name: "photo",
+        label: "Photo",
+        type: "photo",
+        requirement: "optional",
+        position: { x: 50, y: 230, width: 250, height: 250 },
+        styling: photoStyling
+      },
+      {
+        name: "name",
+        label: "Full Name",
+        type: "text",
+        requirement: "required",
+        position: { x: 580, y: 225, maxWidth: 500, fontSize: 22, isBold: true, textAlign: "left" },
+        dataSource: { sourceType: "student_field", fieldPath: "name" }
+      },
+      {
+        name: "student_id",
+        label: "Student ID",
+        type: "text",
+        requirement: "required",
+        position: { x: 580, y: 475, maxWidth: 400, fontSize: 20, isBold: false, textAlign: "left" },
+        dataSource: { sourceType: "student_field", fieldPath: "student_id" }
+      },
+      {
+        name: "class",
+        label: "Class",
+        type: "text",
+        requirement: "optional",
+        position: { x: 580, y: 270, maxWidth: 300, fontSize: 20, isBold: false, textAlign: "left" },
+        dataSource: { sourceType: "student_field", fieldPath: "studentDetails.class" }
+      },
+      {
+        name: "level",
+        label: "Level",
+        type: "text",
+        requirement: "optional",
+        position: { x: 580, y: 320, maxWidth: 500, fontSize: 20, isBold: false, textAlign: "left" },
+        dataSource: { sourceType: "student_field", fieldPath: "studentDetails.level" }
+      },
+      {
+        name: "gender",
+        label: "Gender",
+        type: "text",
+        requirement: "optional",
+        position: { x: 580, y: 375, maxWidth: 300, fontSize: 18, isBold: false, textAlign: "left" },
+        dataSource: { sourceType: "student_field", fieldPath: "gender" }
+      },
+      {
+        name: "residence",
+        label: "Residence",
+        type: "text",
+        requirement: "optional",
+        position: { x: 620, y: 420, maxWidth: 300, fontSize: 18, isBold: false, textAlign: "left" },
+        dataSource: { sourceType: "student_field", fieldPath: "residence" }
+      },
+      {
+        name: "academic_year",
+        label: "Academic Year",
+        type: "text",
+        requirement: "optional",
+        position: { x: 670, y: 472, maxWidth: 300, fontSize: 18, isBold: false, textAlign: "left" },
+        dataSource: { sourceType: "student_field", fieldPath: "studentDetails.academic_year" }
+      }
+    ];
+  } else {
+    // EMPLOYEE TEMPLATE FIELDS
+    return [
+      {
+        name: "photo",
+        label: "Photo",
+        type: "photo",
+        requirement: "optional",
+        position: { x: 50, y: 230, width: 250, height: 250 },
+        styling: photoStyling
+      },
+      {
+        name: "name",
+        label: "Full Name",
+        type: "text",
+        requirement: "required",
+        position: { x: 580, y: 225, maxWidth: 500, fontSize: 22, isBold: true, textAlign: "left" },
+        dataSource: { sourceType: "employee_field", fieldPath: "name" }
+      },
+      {
+        name: "employee_id",
+        label: "Employee ID",
+        type: "text",
+        requirement: "required",
+        position: { x: 580, y: 475, maxWidth: 400, fontSize: 20, isBold: false, textAlign: "left" },
+        dataSource: { sourceType: "employee_field", fieldPath: "employeeDetails.employeeId" }
+      },
+      {
+        name: "department",
+        label: "Department",
+        type: "text",
+        requirement: "optional",
+        position: { x: 580, y: 270, maxWidth: 400, fontSize: 20, isBold: false, textAlign: "left" },
+        dataSource: { sourceType: "employee_field", fieldPath: "employeeDetails.department" }
+      },
+      {
+        name: "position",
+        label: "Position",
+        type: "text",
+        requirement: "optional",
+        position: { x: 580, y: 320, maxWidth: 400, fontSize: 20, isBold: false, textAlign: "left" },
+        dataSource: { sourceType: "employee_field", fieldPath: "employeeDetails.position" }
+      },
+      {
+        name: "gender",
+        label: "Gender",
+        type: "text",
+        requirement: "optional",
+        position: { x: 580, y: 375, maxWidth: 300, fontSize: 18, isBold: false, textAlign: "left" },
+        dataSource: { sourceType: "employee_field", fieldPath: "gender" }
+      },
+      {
+        name: "residence",
+        label: "Residence",
+        type: "text",
+        requirement: "optional",
+        position: { x: 620, y: 420, maxWidth: 300, fontSize: 18, isBold: false, textAlign: "left" },
+        dataSource: { sourceType: "employee_field", fieldPath: "residence" }
+      },
+      {
+        name: "work_phone",
+        label: "Work Phone",
+        type: "text",
+        requirement: "optional",
+        position: { x: 580, y: 420, maxWidth: 300, fontSize: 18, isBold: false, textAlign: "left" },
+        dataSource: { sourceType: "employee_field", fieldPath: "employeeDetails.workPhone" }
+      }
+    ];
+  }
 };
 
 // UPLOAD template (UPDATED with default fields)
@@ -164,7 +257,7 @@ router.post('/upload', upload.fields([
   { name: 'backSide', maxCount: 1 }
 ]), async (req, res) => {
   try {
-    const { name, description, setAsDefault, templateType, organizationId } = req.body;
+    const { name, description, setAsDefault, templateType, organizationId, defaultPersonType } = req.body;
 
     if (!name) {
       return res.status(400).json({ success: false, error: 'Template name is required' });
@@ -223,6 +316,7 @@ router.post('/upload', upload.fields([
       companyId: req.user.companyId,
       schoolId: organizationId,
       templateType: actualTemplateType,
+      defaultPersonType: defaultPersonType || 'student',
       frontSide: {
         filename: frontFile.originalname,
         filepath: frontUpload.secure_url,

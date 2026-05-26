@@ -234,59 +234,49 @@ async function generateCardWithDynamicFields(student, template, studentPhotoUrl)
           }
         }
 
+        // Get styling from field (with defaults)
+        const styling = field.styling || {};
+        const {
+          borderColor = '#005800',
+          borderWidth = 3,
+          borderRadius = 10,
+          noBorder = false
+        } = styling;
+
         if (photoUrl && scaledPos.width && scaledPos.height) {
           try {
             console.log(`📸 Loading photo for ${student.name} from: ${photoUrl.substring(0, 80)}`);
             const studentPhoto = await loadImageFromUrl(photoUrl);
 
+            // Draw photo with clipping (rounded corners)
             ctx.save();
             ctx.beginPath();
-            // Use round rectangle for photo frame
-            const radius = 10;
-            ctx.moveTo(scaledPos.x + radius, scaledPos.y);
-            ctx.lineTo(scaledPos.x + scaledPos.width - radius, scaledPos.y);
-            ctx.quadraticCurveTo(scaledPos.x + scaledPos.width, scaledPos.y, scaledPos.x + scaledPos.width, scaledPos.y + radius);
-            ctx.lineTo(scaledPos.x + scaledPos.width, scaledPos.y + scaledPos.height - radius);
-            ctx.quadraticCurveTo(scaledPos.x + scaledPos.width, scaledPos.y + scaledPos.height, scaledPos.x + scaledPos.width - radius, scaledPos.y + scaledPos.height);
-            ctx.lineTo(scaledPos.x + radius, scaledPos.y + scaledPos.height);
-            ctx.quadraticCurveTo(scaledPos.x, scaledPos.y + scaledPos.height, scaledPos.x, scaledPos.y + scaledPos.height - radius);
-            ctx.lineTo(scaledPos.x, scaledPos.y + radius);
-            ctx.quadraticCurveTo(scaledPos.x, scaledPos.y, scaledPos.x + radius, scaledPos.y);
-            ctx.closePath();
+            ctx.roundRect(scaledPos.x, scaledPos.y, scaledPos.width, scaledPos.height, borderRadius);
             ctx.clip();
-
-            // Draw the photo
             ctx.drawImage(studentPhoto, scaledPos.x, scaledPos.y, scaledPos.width, scaledPos.height);
             ctx.restore();
 
-            // Add border
-            ctx.save();
-            ctx.beginPath();
-            ctx.moveTo(scaledPos.x + radius, scaledPos.y);
-            ctx.lineTo(scaledPos.x + scaledPos.width - radius, scaledPos.y);
-            ctx.quadraticCurveTo(scaledPos.x + scaledPos.width, scaledPos.y, scaledPos.x + scaledPos.width, scaledPos.y + radius);
-            ctx.lineTo(scaledPos.x + scaledPos.width, scaledPos.y + scaledPos.height - radius);
-            ctx.quadraticCurveTo(scaledPos.x + scaledPos.width, scaledPos.y + scaledPos.height, scaledPos.x + scaledPos.width - radius, scaledPos.y + scaledPos.height);
-            ctx.lineTo(scaledPos.x + radius, scaledPos.y + scaledPos.height);
-            ctx.quadraticCurveTo(scaledPos.x, scaledPos.y + scaledPos.height, scaledPos.x, scaledPos.y + scaledPos.height - radius);
-            ctx.lineTo(scaledPos.x, scaledPos.y + radius);
-            ctx.quadraticCurveTo(scaledPos.x, scaledPos.y, scaledPos.x + radius, scaledPos.y);
-            ctx.closePath();
-            ctx.strokeStyle = '#005800';
-            ctx.lineWidth = 3;
-            ctx.stroke();
-            ctx.restore();
+            // Add border (if not disabled and border width > 0)
+            if (!noBorder && borderWidth > 0) {
+              ctx.save();
+              ctx.beginPath();
+              ctx.roundRect(scaledPos.x, scaledPos.y, scaledPos.width, scaledPos.height, borderRadius);
+              ctx.strokeStyle = borderColor;
+              ctx.lineWidth = borderWidth;
+              ctx.stroke();
+              ctx.restore();
+            }
 
             console.log(`✅ Photo placed for ${student.name}`);
           } catch (photoError) {
             console.warn(`⚠️ Could not load photo for ${student.name}:`, photoError.message);
-            drawPhotoPlaceholder(ctx, scaledPos);
+            drawPhotoPlaceholder(ctx, scaledPos, styling);
           }
         } else {
-          // No photo available - draw placeholder
+          // No photo available - draw placeholder with styling
           if (scaledPos.width && scaledPos.height) {
             console.log(`📷 No photo available for ${student.name}, drawing placeholder`);
-            drawPhotoPlaceholder(ctx, scaledPos);
+            drawPhotoPlaceholder(ctx, scaledPos, styling);
           }
         }
         continue;
@@ -423,31 +413,56 @@ async function saveCardHistory(person, template, generationType, batchId, status
 }
 
 
-function drawPhotoPlaceholder(ctx, coords) {
+// DrawPhotoPlaceholder 
+function drawPhotoPlaceholder(ctx, coords, styling = {}) {
   const { x, y, width, height } = coords;
-  const borderRadius = 10;
+  const {
+    borderColor = '#005800',
+    borderWidth = 3,
+    borderRadius = 10,
+    placeholderColor = '#10B981',
+    placeholderBg = 'rgba(16, 185, 129, 0.05)',
+    showCameraIcon = true,
+    showPlaceholderText = true,
+    noBorder = false
+  } = styling;
 
   ctx.save();
+
+  // Draw background
   ctx.beginPath();
   ctx.roundRect(x, y, width, height, borderRadius);
-  ctx.fillStyle = 'rgba(16, 185, 129, 0.05)';
+  ctx.fillStyle = placeholderBg;
   ctx.fill();
 
-  ctx.beginPath();
-  ctx.roundRect(x, y, width, height, borderRadius);
-  ctx.strokeStyle = 'rgba(16, 185, 129, 0.7)';
-  ctx.lineWidth = 3;
-  ctx.stroke();
+  // Draw border (if not disabled and border width > 0)
+  if (!noBorder && borderWidth > 0) {
+    ctx.beginPath();
+    ctx.roundRect(x, y, width, height, borderRadius);
+    ctx.strokeStyle = borderColor;
+    ctx.lineWidth = borderWidth;
+    ctx.stroke();
+  }
 
-  ctx.fillStyle = '#10B981';
-  ctx.font = 'bold 28px Arial';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('📷', x + width / 2, y + height / 2);
+  // Draw camera icon
+  if (showCameraIcon) {
+    ctx.fillStyle = placeholderColor;
+    const iconSize = Math.min(36, height * 0.3);
+    ctx.font = `bold ${iconSize}px Arial`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const yOffset = showPlaceholderText ? 15 : 0;
+    ctx.fillText('📷', x + width / 2, y + height / 2 - yOffset);
+  }
 
-  ctx.fillStyle = '#666666';
-  ctx.font = '12px Arial';
-  ctx.fillText('Add Photo', x + width / 2, y + height - 15);
+  // Draw text
+  if (showPlaceholderText) {
+    ctx.fillStyle = '#666666';
+    const textSize = Math.max(10, Math.min(14, height * 0.1));
+    ctx.font = `${textSize}px Arial`;
+    ctx.fillText('Add Photo', x + width / 2, y + height - 20);
+  }
+
   ctx.restore();
 }
 
