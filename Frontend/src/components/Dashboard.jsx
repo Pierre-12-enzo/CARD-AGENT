@@ -83,15 +83,20 @@ const Dashboard = () => {
     }
     if (user?.role === 'co_worker') {
       const perms = user?.permissions || [];
+      console.log(perms);
       const items = [
-        { icon: 'pi pi-chart-line', label: 'Overview', path: '/co-worker/dashboard', show: true }
+        { icon: 'pi pi-chart-line', label: 'Overview', path: '/co-worker/dashboard', show: true },
+        { icon: 'pi pi-cog', label: 'Settings', path: '/co-worker/settings', show: true }
       ];
 
       const hasPerm = (perm) => perms.some(p => p[perm]);
       items.push({ icon: 'pi pi-users', label: 'Students', path: '/co-worker/students', show: hasPerm('canManageStudents') });
       items.push({ icon: 'pi pi-qrcode', label: 'Cards', path: '/co-worker/cards', show: hasPerm('canGenerateCards') });
       items.push({ icon: 'pi pi-calendar', label: 'Audit Logs', path: '/co-worker/audit-logs', show: hasPerm('canViewAuditLogs') });
-      items.push({ icon: 'pi pi-cog', label: 'Settings', path: '/co-worker/settings', show: true });
+      items.push({ icon: 'pi pi-images', label: 'Photos', path: '/co-worker/photos', show: hasPerm('canUploadPhotos') });
+      items.push({ icon: 'pi pi-csv', label: 'CSV Upload', path: '/co-worker/bulk-import', show: hasPerm('canUploadCSV') });
+      items.push({ icon: 'pi pi-image', label: 'Templates', path: '/co-worker/templates', show: hasPerm('canManageTemplates') });
+      
 
       return items.filter(i => i.show);
     }

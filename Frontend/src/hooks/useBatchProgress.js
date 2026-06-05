@@ -1,4 +1,4 @@
-// hooks/useBatchProgress.js - COMPLETE FIX
+// hooks/useBatchProgress.js - UPDATED with skip tracking
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { getSocket, isSocketConnected } from '../services/socket';
 
@@ -10,9 +10,11 @@ const useBatchProgress = () => {
         processed: 0,
         generated: 0,
         failed: 0,
+        skipped: 0,
         total: 0,
         currentStudent: null,
         failedStudents: [],
+        skippedStudents: [],
         message: '',
         eta: null
     });
@@ -46,9 +48,11 @@ const useBatchProgress = () => {
             processed: 0,
             generated: 0,
             failed: 0,
+            skipped: 0,
             total: 0,
             currentStudent: null,
             failedStudents: [],
+            skippedStudents: [],
             message: '',
             eta: null
         });
@@ -96,7 +100,8 @@ const useBatchProgress = () => {
                 percentage: 0,
                 processed: 0,
                 generated: 0,
-                failed: 0
+                failed: 0,
+                skipped: 0
             }));
         };
 
@@ -111,12 +116,23 @@ const useBatchProgress = () => {
 
             setProgress(prev => {
                 let failedStudents = [...prev.failedStudents];
-                if (data.currentStudent?.error) {
-                    const alreadyRecorded = failedStudents.some(
-                        s => s.id === data.currentStudent.id
-                    );
+                let skippedStudents = [...prev.skippedStudents];
+
+                if (data.type === 'failed' && data.currentStudent?.error) {
+                    const alreadyRecorded = failedStudents.some(s => s.id === data.currentStudent.id);
                     if (!alreadyRecorded) {
                         failedStudents.push({
+                            name: data.currentStudent.name,
+                            id: data.currentStudent.id,
+                            reason: data.currentStudent.error
+                        });
+                    }
+                }
+
+                if (data.type === 'skipped' && data.currentStudent?.error) {
+                    const alreadyRecorded = skippedStudents.some(s => s.id === data.currentStudent.id);
+                    if (!alreadyRecorded) {
+                        skippedStudents.push({
                             name: data.currentStudent.name,
                             id: data.currentStudent.id,
                             reason: data.currentStudent.error
@@ -132,9 +148,11 @@ const useBatchProgress = () => {
                     processed: data.processed || 0,
                     generated: data.generated || 0,
                     failed: data.failed || 0,
+                    skipped: data.skipped || 0,
                     total: data.total || prev.total,
                     currentStudent: data.currentStudent || null,
                     failedStudents,
+                    skippedStudents,
                     message: data.message || `Processing ${data.processed || 0} of ${data.total || 0}...`,
                     eta: eta ? formatETA(eta) : null
                 };
@@ -149,8 +167,11 @@ const useBatchProgress = () => {
                 percentage: 100,
                 generated: data.stats?.generated || prev.generated,
                 failed: data.stats?.failed || prev.failed,
+                skipped: data.stats?.skipped || prev.skipped,
                 message: data.message || 'Batch generation complete!',
-                eta: null
+                eta: null,
+                failedStudents: data.failedStudents || prev.failedStudents,
+                skippedStudents: data.skippedStudents || prev.skippedStudents
             }));
         };
 
@@ -164,16 +185,12 @@ const useBatchProgress = () => {
             }));
         };
 
-        // Register event listeners
         socket.on('card:batch-started', handleBatchStarted);
         socket.on('card:batch-progress', handleBatchProgress);
         socket.on('card:batch-complete', handleBatchComplete);
         socket.on('card:batch-error', handleBatchError);
 
-        console.log('✅ Batch progress listeners registered');
-
         return () => {
-            console.log('🧹 Cleaning up batch progress listeners');
             socket.off('card:batch-started', handleBatchStarted);
             socket.off('card:batch-progress', handleBatchProgress);
             socket.off('card:batch-complete', handleBatchComplete);

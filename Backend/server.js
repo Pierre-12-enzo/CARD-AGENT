@@ -80,6 +80,7 @@ const socketService = require('./services/socketService');
 socketService.init(io);
 
 // Socket connection handler
+// Socket connection handler - UPDATE THIS SECTION
 io.on('connection', (socket) => {
   console.log(`🔌 Connected: ${socket.user?.email} (${socket.user?.role})`);
 
@@ -101,16 +102,23 @@ io.on('connection', (socket) => {
     if (orgId) socket.join(`org_${orgId}`);
   });
 
-  socket.on('subscribe:batch', (batchId) => {
-    if (batchId) socket.join(`batch_${batchId}`);
+  // ✅ FIX: Add batch subscription handler
+  socket.on('card:subscribe', (data) => {
+    if (data && data.batchId) {
+      console.log(`📡 Client ${socket.id} subscribed to batch: ${data.batchId}`);
+      socket.join(`batch_${data.batchId}`);
+    }
   });
 
   socket.on('unsubscribe:student', (orgId) => {
     if (orgId) socket.leave(`org_${orgId}`);
   });
 
-  socket.on('unsubscribe:batch', (batchId) => {
-    if (batchId) socket.leave(`batch_${batchId}`);
+  socket.on('unsubscribe:batch', (data) => {
+    if (data && data.batchId) {
+      console.log(`📡 Client ${socket.id} unsubscribed from batch: ${data.batchId}`);
+      socket.leave(`batch_${data.batchId}`);
+    }
   });
 
   socket.on('ping', () => {

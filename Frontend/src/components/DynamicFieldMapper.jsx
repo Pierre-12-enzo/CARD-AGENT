@@ -1,4 +1,4 @@
-// components/DynamicFieldMapper.jsx - COMPLETE UPDATE
+// components/DynamicFieldMapper.jsx - COMPLETELY FIXED
 import React, { useState, useEffect } from 'react';
 
 const DynamicFieldMapper = ({ template, students, onSave, onBack, initialMappings }) => {
@@ -13,162 +13,164 @@ const DynamicFieldMapper = ({ template, students, onSave, onBack, initialMapping
 
     const sampleStudent = students?.find(s => s) || null;
 
-    // Available source fields based on template type
-    const getAvailableDataSources = () => {
+    // Default styling based on template type
+    const getDefaultStyling = (type) => {
+        return type === 'student' ? {
+            borderColor: '#005800',
+            borderWidth: 3,
+            borderRadius: 10,
+            placeholderColor: '#10B981',
+            placeholderBg: 'rgba(16, 185, 129, 0.05)',
+            showCameraIcon: true,
+            showPlaceholderText: true,
+            noBorder: false
+        } : {
+            borderColor: '#1e293b',
+            borderWidth: 3,
+            borderRadius: 10,
+            placeholderColor: '#64748b',
+            placeholderBg: 'rgba(30, 41, 59, 0.05)',
+            showCameraIcon: true,
+            showPlaceholderText: true,
+            noBorder: false
+        };
+    };
+
+    // Get available data sources - ONLY for the current template type
+    const getAvailableDataSourcesForType = (type) => {
         const commonSources = [
-            { label: 'Name', path: 'name', category: 'Basic', personType: 'both' },
-            { label: 'Gender', path: 'gender', category: 'Basic', personType: 'both' },
-            { label: 'Residence', path: 'residence', category: 'Basic', personType: 'both' }
+            { label: 'Name', path: 'name', category: 'Basic' },
+            { label: 'Gender', path: 'gender', category: 'Basic' },
+            { label: 'Residence', path: 'residence', category: 'Basic' }
         ];
 
         const studentSources = [
-            { label: 'Student ID', path: 'student_id', category: 'Basic', personType: 'both' },
-            { label: 'Class', path: 'studentDetails.class', category: 'Student', personType: 'student' },
-            { label: 'Level', path: 'studentDetails.level', category: 'Student', personType: 'student' },
-            { label: 'Academic Year', path: 'studentDetails.academic_year', category: 'Student', personType: 'student' },
-            { label: 'Parent Phone', path: 'studentDetails.parent_phone', category: 'Student', personType: 'student' }
+            { label: 'Student ID', path: 'student_id', category: 'Student' },
+            { label: 'Class', path: 'studentDetails.class', category: 'Student' },
+            { label: 'Level', path: 'studentDetails.level', category: 'Student' },
+            { label: 'Academic Year', path: 'studentDetails.academic_year', category: 'Student' },
+            { label: 'Parent Phone', path: 'studentDetails.parent_phone', category: 'Student' }
         ];
 
         const employeeSources = [
-            { label: 'Employee ID', path: 'employeeDetails.employeeId', category: 'Employee', personType: 'employee' },
-            { label: 'Department', path: 'employeeDetails.department', category: 'Employee', personType: 'employee' },
-            { label: 'Position', path: 'employeeDetails.position', category: 'Employee', personType: 'employee' },
-            { label: 'Work Phone', path: 'employeeDetails.workPhone', category: 'Employee', personType: 'employee' }
+            { label: 'Employee ID', path: 'employeeDetails.employeeId', category: 'Employee' },
+            { label: 'Department', path: 'employeeDetails.department', category: 'Employee' },
+            { label: 'Position', path: 'employeeDetails.position', category: 'Employee' },
+            { label: 'Work Phone', path: 'employeeDetails.workPhone', category: 'Employee' }
         ];
 
-        if (templateType === 'student') {
+        if (type === 'student') {
             return [...commonSources, ...studentSources];
-        } else if (templateType === 'employee') {
+        }
+        if (type === 'employee') {
             return [...commonSources, ...employeeSources];
         }
         return [...commonSources, ...studentSources, ...employeeSources];
     };
 
-    const availableDataSources = getAvailableDataSources();
-
-    // Get default fields based on template type
+    // Get default fields for template type (ALL FIELDS REQUIRED)
     const getDefaultFieldsForType = (type) => {
-        const basePosition = { x: 580, y: 225, maxWidth: 500, fontSize: 22, isBold: true };
-
         if (type === 'student') {
             return [
                 {
-                    name: 'photo', label: 'Photo', type: 'photo', requirement: 'optional',
+                    name: 'photo', label: 'Photo', type: 'photo', requirement: 'required',
                     position: { x: 50, y: 230, width: 250, height: 250 },
-                    styling: {
-                        borderColor: '#005800',
-                        borderWidth: 3,
-                        borderRadius: 10,
-                        placeholderColor: '#10B981',
-                        placeholderBg: 'rgba(16, 185, 129, 0.05)',
-                        showCameraIcon: true,
-                        showPlaceholderText: true,
-                        noBorder: false
-                    },
-                    uniqueId: `photo-${Date.now()}`
+                    styling: getDefaultStyling('student'),
+                    uniqueId: `photo-${Date.now()}-${Math.random()}`
                 },
                 {
                     name: 'name', label: 'Full Name', type: 'text', requirement: 'required',
                     position: { x: 580, y: 225, maxWidth: 500, fontSize: 22, isBold: true, textAlign: 'left' },
                     dataSource: { sourceType: 'student_field', fieldPath: 'name' },
-                    uniqueId: `name-${Date.now()}`
+                    uniqueId: `name-${Date.now()}-${Math.random()}`
                 },
                 {
                     name: 'student_id', label: 'Student ID', type: 'text', requirement: 'required',
-                    position: { x: 580, y: 475, maxWidth: 400, fontSize: 20 },
+                    position: { x: 580, y: 475, maxWidth: 400, fontSize: 20, isBold: false, textAlign: 'left' },
                     dataSource: { sourceType: 'student_field', fieldPath: 'student_id' },
-                    uniqueId: `student_id-${Date.now()}`
+                    uniqueId: `student_id-${Date.now()}-${Math.random()}`
                 },
                 {
-                    name: 'class', label: 'Class', type: 'text', requirement: 'optional',
-                    position: { x: 580, y: 270, maxWidth: 300, fontSize: 20 },
+                    name: 'class', label: 'Class', type: 'text', requirement: 'required',
+                    position: { x: 580, y: 270, maxWidth: 300, fontSize: 20, isBold: false, textAlign: 'left' },
                     dataSource: { sourceType: 'student_field', fieldPath: 'studentDetails.class' },
-                    uniqueId: `class-${Date.now()}`
+                    uniqueId: `class-${Date.now()}-${Math.random()}`
                 },
                 {
-                    name: 'level', label: 'Level', type: 'text', requirement: 'optional',
-                    position: { x: 580, y: 320, maxWidth: 500, fontSize: 20 },
+                    name: 'level', label: 'Level', type: 'text', requirement: 'required',
+                    position: { x: 580, y: 320, maxWidth: 500, fontSize: 20, isBold: false, textAlign: 'left' },
                     dataSource: { sourceType: 'student_field', fieldPath: 'studentDetails.level' },
-                    uniqueId: `level-${Date.now()}`
+                    uniqueId: `level-${Date.now()}-${Math.random()}`
                 },
                 {
-                    name: 'gender', label: 'Gender', type: 'text', requirement: 'optional',
-                    position: { x: 580, y: 375, maxWidth: 300, fontSize: 18 },
+                    name: 'gender', label: 'Gender', type: 'text', requirement: 'required',
+                    position: { x: 580, y: 375, maxWidth: 300, fontSize: 18, isBold: false, textAlign: 'left' },
                     dataSource: { sourceType: 'student_field', fieldPath: 'gender' },
-                    uniqueId: `gender-${Date.now()}`
+                    uniqueId: `gender-${Date.now()}-${Math.random()}`
                 },
                 {
-                    name: 'residence', label: 'Residence', type: 'text', requirement: 'optional',
-                    position: { x: 620, y: 420, maxWidth: 300, fontSize: 18 },
+                    name: 'residence', label: 'Residence', type: 'text', requirement: 'required',
+                    position: { x: 620, y: 420, maxWidth: 300, fontSize: 18, isBold: false, textAlign: 'left' },
                     dataSource: { sourceType: 'student_field', fieldPath: 'residence' },
-                    uniqueId: `residence-${Date.now()}`
+                    uniqueId: `residence-${Date.now()}-${Math.random()}`
                 },
                 {
-                    name: 'academic_year', label: 'Academic Year', type: 'text', requirement: 'optional',
-                    position: { x: 670, y: 472, maxWidth: 300, fontSize: 18 },
+                    name: 'academic_year', label: 'Academic Year', type: 'text', requirement: 'required',
+                    position: { x: 670, y: 472, maxWidth: 300, fontSize: 18, isBold: false, textAlign: 'left' },
                     dataSource: { sourceType: 'student_field', fieldPath: 'studentDetails.academic_year' },
-                    uniqueId: `academic_year-${Date.now()}`
+                    uniqueId: `academic_year-${Date.now()}-${Math.random()}`
                 }
             ];
         } else {
             // Employee template
             return [
                 {
-                    name: 'photo', label: 'Photo', type: 'photo', requirement: 'optional',
+                    name: 'photo', label: 'Photo', type: 'photo', requirement: 'required',
                     position: { x: 50, y: 230, width: 250, height: 250 },
-                    styling: {
-                        borderColor: '#1e293b',
-                        borderWidth: 3,
-                        borderRadius: 10,
-                        placeholderColor: '#64748b',
-                        placeholderBg: 'rgba(30, 41, 59, 0.05)',
-                        showCameraIcon: true,
-                        showPlaceholderText: true,
-                        noBorder: false
-                    },
-                    uniqueId: `photo-${Date.now()}`
+                    styling: getDefaultStyling('employee'),
+                    uniqueId: `photo-${Date.now()}-${Math.random()}`
                 },
                 {
                     name: 'name', label: 'Full Name', type: 'text', requirement: 'required',
-                    position: { x: 580, y: 225, maxWidth: 500, fontSize: 22, isBold: true },
+                    position: { x: 580, y: 225, maxWidth: 500, fontSize: 22, isBold: true, textAlign: 'left' },
                     dataSource: { sourceType: 'employee_field', fieldPath: 'name' },
-                    uniqueId: `name-${Date.now()}`
+                    uniqueId: `name-${Date.now()}-${Math.random()}`
                 },
                 {
                     name: 'employee_id', label: 'Employee ID', type: 'text', requirement: 'required',
-                    position: { x: 580, y: 475, maxWidth: 400, fontSize: 20 },
+                    position: { x: 580, y: 475, maxWidth: 400, fontSize: 20, isBold: false, textAlign: 'left' },
                     dataSource: { sourceType: 'employee_field', fieldPath: 'employeeDetails.employeeId' },
-                    uniqueId: `employee_id-${Date.now()}`
+                    uniqueId: `employee_id-${Date.now()}-${Math.random()}`
                 },
                 {
-                    name: 'department', label: 'Department', type: 'text', requirement: 'optional',
-                    position: { x: 580, y: 270, maxWidth: 400, fontSize: 20 },
+                    name: 'department', label: 'Department', type: 'text', requirement: 'required',
+                    position: { x: 580, y: 270, maxWidth: 400, fontSize: 20, isBold: false, textAlign: 'left' },
                     dataSource: { sourceType: 'employee_field', fieldPath: 'employeeDetails.department' },
-                    uniqueId: `department-${Date.now()}`
+                    uniqueId: `department-${Date.now()}-${Math.random()}`
                 },
                 {
-                    name: 'position', label: 'Position', type: 'text', requirement: 'optional',
-                    position: { x: 580, y: 320, maxWidth: 400, fontSize: 20 },
+                    name: 'position', label: 'Position', type: 'text', requirement: 'required',
+                    position: { x: 580, y: 320, maxWidth: 400, fontSize: 20, isBold: false, textAlign: 'left' },
                     dataSource: { sourceType: 'employee_field', fieldPath: 'employeeDetails.position' },
-                    uniqueId: `position-${Date.now()}`
+                    uniqueId: `position-${Date.now()}-${Math.random()}`
                 },
                 {
-                    name: 'gender', label: 'Gender', type: 'text', requirement: 'optional',
-                    position: { x: 580, y: 375, maxWidth: 300, fontSize: 18 },
+                    name: 'gender', label: 'Gender', type: 'text', requirement: 'required',
+                    position: { x: 580, y: 375, maxWidth: 300, fontSize: 18, isBold: false, textAlign: 'left' },
                     dataSource: { sourceType: 'employee_field', fieldPath: 'gender' },
-                    uniqueId: `gender-${Date.now()}`
+                    uniqueId: `gender-${Date.now()}-${Math.random()}`
                 },
                 {
-                    name: 'residence', label: 'Residence', type: 'text', requirement: 'optional',
-                    position: { x: 620, y: 420, maxWidth: 300, fontSize: 18 },
+                    name: 'residence', label: 'Residence', type: 'text', requirement: 'required',
+                    position: { x: 620, y: 420, maxWidth: 300, fontSize: 18, isBold: false, textAlign: 'left' },
                     dataSource: { sourceType: 'employee_field', fieldPath: 'residence' },
-                    uniqueId: `residence-${Date.now()}`
+                    uniqueId: `residence-${Date.now()}-${Math.random()}`
                 },
                 {
-                    name: 'work_phone', label: 'Work Phone', type: 'text', requirement: 'optional',
-                    position: { x: 580, y: 420, maxWidth: 300, fontSize: 18 },
+                    name: 'work_phone', label: 'Work Phone', type: 'text', requirement: 'required',
+                    position: { x: 580, y: 420, maxWidth: 300, fontSize: 18, isBold: false, textAlign: 'left' },
                     dataSource: { sourceType: 'employee_field', fieldPath: 'employeeDetails.workPhone' },
-                    uniqueId: `work_phone-${Date.now()}`
+                    uniqueId: `work_phone-${Date.now()}-${Math.random()}`
                 }
             ];
         }
@@ -177,24 +179,47 @@ const DynamicFieldMapper = ({ template, students, onSave, onBack, initialMapping
     // Initialize fields from template or create default
     useEffect(() => {
         if (template?.fields && template.fields.length > 0) {
-            setFields(template.fields.map(f => ({
-                ...f,
-                uniqueId: f._id || `${f.name}-${Date.now()}-${Math.random()}`
-            })));
-            if (template.defaultPersonType) {
+            // Convert existing fields - ensure requirement is set correctly
+            const convertedFields = template.fields.map(f => {
+                // If it's a text field or photo field, ensure requirement is set
+                if ((f.type === 'text' || f.type === 'photo') && !f.requirement) {
+                    return { ...f, requirement: 'required', uniqueId: f._id || `${f.name}-${Date.now()}-${Math.random()}` };
+                }
+                return { ...f, uniqueId: f._id || `${f.name}-${Date.now()}-${Math.random()}` };
+            });
+            setFields(convertedFields);
+
+            // Detect template type from fields
+            const hasEmployeeFields = convertedFields.some(f => f.name === 'employee_id' || f.name === 'department');
+            const hasStudentFields = convertedFields.some(f => f.name === 'student_id' || f.name === 'class');
+
+            if (hasEmployeeFields && !hasStudentFields) {
+                setTemplateType('employee');
+            } else if (hasStudentFields && !hasEmployeeFields) {
+                setTemplateType('student');
+            } else if (template.defaultPersonType) {
                 setTemplateType(template.defaultPersonType);
             }
         } else {
-            // New template - use selected type
             const defaultFields = getDefaultFieldsForType(templateType);
             setFields(defaultFields);
         }
-    }, [template, templateType]);
+    }, [template]);
 
     const updateField = (uniqueId, updates) => {
-        setFields(prev => prev.map(field =>
-            field.uniqueId === uniqueId ? { ...field, ...updates } : field
-        ));
+        setFields(prev => prev.map(field => {
+            if (field.uniqueId === uniqueId) {
+                if (updates.position && field.type === 'photo') {
+                    return {
+                        ...field,
+                        position: updates.position,
+                        styling: field.styling || getDefaultStyling(templateType)
+                    };
+                }
+                return { ...field, ...updates };
+            }
+            return field;
+        }));
     };
 
     const removeField = (uniqueId) => {
@@ -213,20 +238,11 @@ const DynamicFieldMapper = ({ template, students, onSave, onBack, initialMapping
             name: newFieldName.toLowerCase().replace(/\s/g, '_'),
             label: newFieldLabel || newFieldName,
             type: newFieldType,
-            requirement: 'optional',
+            requirement: 'required',
             position: { x: 100, y: 100, fontSize: 20, isBold: false },
             dataSource: { sourceType: templateType === 'student' ? 'student_field' : 'employee_field', fieldPath: '' },
             ...(newFieldType === 'photo' && {
-                styling: {
-                    borderColor: templateType === 'student' ? '#005800' : '#1e293b',
-                    borderWidth: 3,
-                    borderRadius: 10,
-                    placeholderColor: templateType === 'student' ? '#10B981' : '#64748b',
-                    placeholderBg: templateType === 'student' ? 'rgba(16, 185, 129, 0.05)' : 'rgba(30, 41, 59, 0.05)',
-                    showCameraIcon: true,
-                    showPlaceholderText: true,
-                    noBorder: false
-                }
+                styling: getDefaultStyling(templateType)
             }),
             uniqueId: `new-${Date.now()}-${Math.random()}`
         };
@@ -236,6 +252,12 @@ const DynamicFieldMapper = ({ template, students, onSave, onBack, initialMapping
         setNewFieldName('');
         setNewFieldLabel('');
         setNewFieldType('text');
+    };
+
+    // Reset fields when template type changes
+    const handleTemplateTypeChange = (type) => {
+        setTemplateType(type);
+        setFields(getDefaultFieldsForType(type));
     };
 
     const getPreviewValue = (field) => {
@@ -255,10 +277,25 @@ const DynamicFieldMapper = ({ template, students, onSave, onBack, initialMapping
 
     const handleSave = async () => {
         setSaving(true);
-        const fieldsToSave = fields.map(({ uniqueId, ...field }) => ({
-            ...field,
-            defaultPersonType: templateType
-        }));
+
+        // Ensure all fields have proper requirement and styling
+        const fieldsToSave = fields.map(({ uniqueId, ...field }) => {
+            // Ensure text and photo fields are required by default
+            if ((field.type === 'text' || field.type === 'photo') && !field.requirement) {
+                field.requirement = 'required';
+            }
+            if (field.type === 'photo') {
+                const defaultStyling = getDefaultStyling(templateType);
+                field.styling = {
+                    ...defaultStyling,
+                    ...(field.styling || {})
+                };
+            }
+            return field;
+        });
+
+        console.log('📤 Saving fields:', fieldsToSave.map(f => ({ name: f.name, requirement: f.requirement })));
+
         await onSave(fieldsToSave, fields);
         setSaving(false);
     };
@@ -275,15 +312,13 @@ const DynamicFieldMapper = ({ template, students, onSave, onBack, initialMapping
                     <h4 className="font-semibold text-slate-800">Template Type</h4>
                 </div>
                 <p className="text-xs text-slate-500 mb-3">
-                    Select the default card type. This determines which data fields are available.
+                    Select the card type. This determines which data fields are available.
+                    <span className="text-amber-600 block mt-1">⚠️ All fields are required by default. Students/Employees missing any field will be skipped.</span>
                 </p>
                 <div className="flex gap-3">
                     <button
                         type="button"
-                        onClick={() => {
-                            setTemplateType('student');
-                            setFields(getDefaultFieldsForType('student'));
-                        }}
+                        onClick={() => handleTemplateTypeChange('student')}
                         className={`flex-1 p-3 rounded-xl border-2 transition-all ${templateType === 'student'
                             ? 'border-red-500 bg-red-50 shadow-md'
                             : 'border-slate-200 bg-white hover:border-red-200'}`}
@@ -292,14 +327,11 @@ const DynamicFieldMapper = ({ template, students, onSave, onBack, initialMapping
                             <i className="pi pi-graduation-cap text-lg"></i>
                             <span className="font-medium">Student Card</span>
                         </div>
-                        <p className="text-xs text-slate-500 mt-1">ID, Class, Level, Academic Year</p>
+                        <p className="text-xs text-slate-500 mt-1">Student ID, Class, Level, Academic Year + Photo</p>
                     </button>
                     <button
                         type="button"
-                        onClick={() => {
-                            setTemplateType('employee');
-                            setFields(getDefaultFieldsForType('employee'));
-                        }}
+                        onClick={() => handleTemplateTypeChange('employee')}
                         className={`flex-1 p-3 rounded-xl border-2 transition-all ${templateType === 'employee'
                             ? 'border-red-500 bg-red-50 shadow-md'
                             : 'border-slate-200 bg-white hover:border-red-200'}`}
@@ -308,7 +340,7 @@ const DynamicFieldMapper = ({ template, students, onSave, onBack, initialMapping
                             <i className="pi pi-briefcase text-lg"></i>
                             <span className="font-medium">Employee Card</span>
                         </div>
-                        <p className="text-xs text-slate-500 mt-1">ID, Department, Position, Work Phone</p>
+                        <p className="text-xs text-slate-500 mt-1">Employee ID, Department, Position, Work Phone + Photo</p>
                     </button>
                 </div>
             </div>
@@ -320,11 +352,12 @@ const DynamicFieldMapper = ({ template, students, onSave, onBack, initialMapping
                     <h4 className="font-semibold text-blue-800">Field Mapping - {templateType === 'student' ? 'Student' : 'Employee'} Template</h4>
                 </div>
                 <p className="text-sm text-blue-600">
-                    Define which fields appear on this template. Required fields must have data or cards will be skipped.
+                    Define which fields appear on this card.
+                    <strong className="block mt-1 text-red-600">⚠️ Required fields MUST have data or cards will be SKIPPED!</strong>
                 </p>
             </div>
 
-            {/* Photo Fields Section with Styling */}
+            {/* Photo Fields Section */}
             {photoFields.length > 0 && (
                 <div className="space-y-3">
                     <div className="flex justify-between items-center">
@@ -337,18 +370,9 @@ const DynamicFieldMapper = ({ template, students, onSave, onBack, initialMapping
                                     name: `photo_${Date.now()}`,
                                     label: 'Photo',
                                     type: 'photo',
-                                    requirement: 'optional',
+                                    requirement: 'required',
                                     position: { x: 50, y: 230, width: 250, height: 250 },
-                                    styling: {
-                                        borderColor: templateType === 'student' ? '#005800' : '#1e293b',
-                                        borderWidth: 3,
-                                        borderRadius: 10,
-                                        placeholderColor: templateType === 'student' ? '#10B981' : '#64748b',
-                                        placeholderBg: templateType === 'student' ? 'rgba(16, 185, 129, 0.05)' : 'rgba(30, 41, 59, 0.05)',
-                                        showCameraIcon: true,
-                                        showPlaceholderText: true,
-                                        noBorder: false
-                                    },
+                                    styling: getDefaultStyling(templateType),
                                     uniqueId: `photo-${Date.now()}-${Math.random()}`
                                 };
                                 setFields(prev => [...prev, newPhotoField]);
@@ -376,11 +400,11 @@ const DynamicFieldMapper = ({ template, students, onSave, onBack, initialMapping
                                         <i className="pi pi-palette mr-1"></i> Styling
                                     </button>
                                     <select
-                                        value={field.requirement || 'optional'}
+                                        value={field.requirement || 'required'}
                                         onChange={(e) => updateField(field.uniqueId, { requirement: e.target.value })}
-                                        className="text-xs px-2 py-1 border rounded-lg"
+                                        className="text-xs px-2 py-1 border rounded-lg bg-white"
                                     >
-                                        <option value="required">Required</option>
+                                        <option value="required">Required ✓</option>
                                         <option value="optional">Optional</option>
                                     </select>
                                     <button onClick={() => removeField(field.uniqueId)} className="text-red-500 hover:text-red-700 text-sm">
@@ -401,7 +425,7 @@ const DynamicFieldMapper = ({ template, students, onSave, onBack, initialMapping
                                             <label className="text-xs text-slate-500 block mb-1">Border Color</label>
                                             <input
                                                 type="color"
-                                                value={field.styling?.borderColor || '#005800'}
+                                                value={field.styling?.borderColor || (templateType === 'student' ? '#005800' : '#1e293b')}
                                                 onChange={(e) => updateField(field.uniqueId, {
                                                     styling: { ...field.styling, borderColor: e.target.value }
                                                 })}
@@ -438,7 +462,7 @@ const DynamicFieldMapper = ({ template, students, onSave, onBack, initialMapping
                                             <label className="text-xs text-slate-500 block mb-1">Icon/Text Color</label>
                                             <input
                                                 type="color"
-                                                value={field.styling?.placeholderColor || '#10B981'}
+                                                value={field.styling?.placeholderColor || (templateType === 'student' ? '#10B981' : '#64748b')}
                                                 onChange={(e) => updateField(field.uniqueId, {
                                                     styling: { ...field.styling, placeholderColor: e.target.value }
                                                 })}
@@ -478,45 +502,17 @@ const DynamicFieldMapper = ({ template, students, onSave, onBack, initialMapping
                                                 })}
                                                 className="w-4 h-4"
                                             />
-                                            <span className="text-slate-600">No Border (for templates with existing frame)</span>
+                                            <span className="text-slate-600">No Border</span>
                                         </label>
-                                    </div>
-                                    {/* Live Preview */}
-                                    <div className="mt-3 p-3 bg-slate-100 rounded-lg">
-                                        <p className="text-xs text-slate-500 mb-2">Preview:</p>
-                                        <div className="flex items-center gap-3">
-                                            <div
-                                                className="relative bg-white rounded flex items-center justify-center"
-                                                style={{
-                                                    width: Math.min(80, field.position?.width || 80),
-                                                    height: Math.min(80, field.position?.height || 80),
-                                                    border: !field.styling?.noBorder && field.styling?.borderWidth > 0 ? `${field.styling?.borderWidth || 3}px solid ${field.styling?.borderColor || '#005800'}` : 'none',
-                                                    borderRadius: `${field.styling?.borderRadius || 10}px`,
-                                                    backgroundColor: field.styling?.placeholderBg || 'rgba(16, 185, 129, 0.05)'
-                                                }}
-                                            >
-                                                {field.styling?.showCameraIcon !== false && (
-                                                    <span style={{ fontSize: '24px', color: field.styling?.placeholderColor || '#10B981' }}>📷</span>
-                                                )}
-                                            </div>
-                                            <div className="text-xs text-slate-500">
-                                                {field.styling?.noBorder ? 'No border' : `${field.styling?.borderWidth || 3}px ${field.styling?.borderColor || '#005800'}`}<br />
-                                                Radius: {field.styling?.borderRadius || 10}px
-                                            </div>
-                                        </div>
                                     </div>
                                 </div>
                             )}
-
-                            <div className="text-sm text-slate-600 mt-2">
-                                📸 Student/Employee photo will be placed here
-                            </div>
                         </div>
                     ))}
                 </div>
             )}
 
-            {/* Text Fields Section - Same as before */}
+            {/* Text Fields Section */}
             {textFields.length > 0 && (
                 <div className="space-y-3">
                     <div className="flex justify-between items-center">
@@ -544,11 +540,11 @@ const DynamicFieldMapper = ({ template, students, onSave, onBack, initialMapping
                                     </div>
                                     <div className="flex gap-2">
                                         <select
-                                            value={field.requirement || 'optional'}
+                                            value={field.requirement || 'required'}
                                             onChange={(e) => updateField(field.uniqueId, { requirement: e.target.value })}
-                                            className="text-xs px-2 py-1 border rounded-lg"
+                                            className="text-xs px-2 py-1 border rounded-lg bg-white"
                                         >
-                                            <option value="required">Required</option>
+                                            <option value="required">Required ✓</option>
                                             <option value="optional">Optional</option>
                                             <option value="conditional">Conditional</option>
                                         </select>
@@ -622,7 +618,7 @@ const DynamicFieldMapper = ({ template, students, onSave, onBack, initialMapping
                                     ) : (
                                         <select value={field.dataSource?.fieldPath || ''} onChange={(e) => updateField(field.uniqueId, { dataSource: { ...field.dataSource, fieldPath: e.target.value } })} className="px-3 py-2 border rounded-lg text-sm">
                                             <option value="">Select data source...</option>
-                                            {availableDataSources.map(ds => (
+                                            {getAvailableDataSourcesForType(templateType).map(ds => (
                                                 <option key={ds.path} value={ds.path}>{ds.label} ({ds.category})</option>
                                             ))}
                                         </select>
@@ -653,6 +649,7 @@ const DynamicFieldMapper = ({ template, students, onSave, onBack, initialMapping
                                 <option value="text">Text Field</option>
                                 <option value="photo">Photo Field</option>
                             </select>
+                            <p className="text-xs text-amber-600 mt-1">⚠️ New fields will be REQUIRED by default</p>
                         </div>
                         <div className="flex gap-3 mt-6">
                             <button onClick={() => setShowAddField(false)} className="flex-1 px-4 py-2 border rounded-lg">Cancel</button>

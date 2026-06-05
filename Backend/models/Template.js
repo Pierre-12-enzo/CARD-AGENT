@@ -44,24 +44,44 @@ const conditionalRuleSchema = new mongoose.Schema({
 
 // Individual field definition
 const templateFieldSchema = new mongoose.Schema({
-    name: { type: String, required: true },  // Internal name
-    label: { type: String, required: true }, // Display name
-    type: { type: String, enum: ['text', 'photo', 'barcode'], default: 'text' },
+   //
+  name: String,
+  label: String,
+  type: { type: String, enum: ['text', 'photo', 'barcode', 'qr'] },
+  requirement: { type: String, enum: ['required', 'optional', 'conditional'], default: 'optional' },
+  position: {
+    x: Number,
+    y: Number,
+    width: Number,
+    height: Number,
+    maxWidth: Number,
+    fontSize: Number,
+    fontColor: String,
+    isBold: Boolean,
+    textAlign: { type: String, enum: ['left', 'center', 'right'], default: 'left' }
+  },
+  dataSource: {
+    sourceType: { type: String, enum: ['student_field', 'employee_field', 'static', 'computed'] },
+    fieldPath: String,
+    staticValue: String,
+    computedExpression: String
+  },
+  conditionalRule: {
+    dependsOn: String,
+    requiredIfEquals: String
+  },
+  // ✅ ADD THIS - styling for photo fields
+  styling: {
+    borderColor: { type: String, default: '#005800' },
+    borderWidth: { type: Number, default: 3 },
+    borderRadius: { type: Number, default: 10 },
+    placeholderColor: { type: String, default: '#10B981' },
+    placeholderBg: { type: String, default: 'rgba(16, 185, 129, 0.05)' },
+    showCameraIcon: { type: Boolean, default: true },
+    showPlaceholderText: { type: Boolean, default: true },
+    noBorder: { type: Boolean, default: false }
+  }  
 
-    // Requirement settings
-    requirement: {
-        type: String,
-        enum: ['required', 'optional', 'conditional'],
-        default: 'optional'
-    },
-    defaultValue: { type: String, default: '' },
-    conditionalRule: { type: conditionalRuleSchema },
-
-    // Position on template
-    position: { type: fieldPositionSchema, required: true },
-
-    // Data source mapping
-    dataSource: { type: dataSourceSchema }
 });
 
 const templateSchema = new mongoose.Schema({

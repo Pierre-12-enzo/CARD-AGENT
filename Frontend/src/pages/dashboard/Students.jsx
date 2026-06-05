@@ -1,4 +1,4 @@
-// pages/dashboard/Students.jsx - CARD-AGENT with Smart Level Selection + Employee ID Protection
+// pages/dashboard/Students.jsx - CARD-AGENT with Clean University/Corporate Level Handling
 import React, { useState, useEffect, useRef } from 'react';
 import { studentAPI, organizationAPI } from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
@@ -55,6 +55,125 @@ const Students = () => {
   const [idWarning, setIdWarning] = useState('');
 
   const modalRef = useRef(null);
+
+  // ==================== SMART LEVEL LOGIC - CLEAN VERSION ====================
+
+  /**
+   * Check if level field should be hidden (for university/corporate)
+   */
+  const shouldHideLevel = () => {
+    if (!selectedOrg) return false;
+    const orgType = selectedOrg.type;
+    return orgType === 'corporate' || orgType === 'university';
+  };
+
+  /**
+   * Get the default level based on organization type
+   */
+  const getDefaultLevel = () => {
+    if (!selectedOrg) return '';
+
+    const orgType = selectedOrg.type;
+
+    // Types that don't need level at all
+    if (orgType === 'corporate' || orgType === 'university') return 'n_a';
+
+    // Primary schools
+    if (orgType === 'primary') return 'Primary';
+
+    // Secondary schools based on level setting
+    const orgLevel = selectedOrg.level;
+    if (orgLevel === 'o_level') return 'O-Level';
+    if (orgLevel === 'a_level') return 'A-Level';
+    if (orgLevel === 'tvet') return 'L3';
+    if (orgLevel === 'mixed') return ''; // User must choose
+
+    return '';
+  };
+
+  /**
+   * Get available level options based on organization
+   */
+  const getLevelOptions = () => {
+    if (!selectedOrg) return [];
+
+    const orgType = selectedOrg.type;
+    const orgLevel = selectedOrg.level;
+
+    // Corporate & University - no level options (hidden)
+    if (orgType === 'corporate') return [];
+    if (orgType === 'university') return [];
+
+    // Primary school
+    if (orgType === 'primary') return [{ value: 'Primary', label: 'Primary' }];
+
+    // TVET
+    if (orgType === 'tvet' || orgLevel === 'tvet') {
+      return [
+        { value: 'L3', label: 'Level 3' },
+        { value: 'L4', label: 'Level 4' },
+        { value: 'L5', label: 'Level 5' }
+      ];
+    }
+
+    // Secondary school
+    if (orgLevel === 'o_level') return [{ value: 'O-Level', label: 'O-Level' }];
+    if (orgLevel === 'a_level') return [{ value: 'A-Level', label: 'A-Level' }];
+    if (orgLevel === 'mixed') {
+      return [
+        { value: 'O-Level', label: 'O-Level' },
+        { value: 'A-Level', label: 'A-Level' }
+      ];
+    }
+
+    return [];
+  };
+
+  /**
+   * Check if level field should be disabled (locked to one value)
+   */
+  const isLevelLocked = () => {
+    if (!selectedOrg) return false;
+    const orgType = selectedOrg.type;
+    const orgLevel = selectedOrg.level;
+
+    if (shouldHideLevel()) return true;
+    if (orgType === 'primary') return true;
+    return ['o_level', 'a_level', 'tvet'].includes(orgLevel);
+  };
+
+  /**
+   * Get placeholder text for Class field based on organization type
+   */
+  const getClassPlaceholder = () => {
+    if (!selectedOrg) return 'Enter class/section';
+
+    switch (selectedOrg.type) {
+      case 'university':
+        return 'e.g., Year 1 CS-A, Year 2 IT-B, Masters in CS';
+      case 'corporate':
+        return 'e.g., Finance Dept, HR Team, Sales Division';
+      case 'primary':
+      case 'secondary':
+        return 'e.g., S1A, P5B, Form 3A';
+      default:
+        return 'Enter class/section';
+    }
+  };
+
+  /**
+   * Get helper text for Class field
+   */
+  const getClassHelperText = () => {
+    if (!selectedOrg) return '';
+    if (selectedOrg.type === 'university') {
+      return '💡 Include year and section: "Year 1 CS-A", "Year 2 IT-B"';
+    }
+    if (selectedOrg.type === 'corporate') {
+      return '💡 Use department or team name';
+    }
+    return '';
+  };
 
   // ==================== LOAD DATA ====================
   useEffect(() => {
@@ -120,78 +239,6 @@ const Students = () => {
     } catch (error) {
       console.error('Failed to load filter options:', error);
     }
-  };
-
-  // ==================== SMART LEVEL LOGIC ====================
-
-  /**
-   * Get the default level based on organization type and level setting
-   */
-  const getDefaultLevel = () => {
-    if (!selectedOrg) return '';
-
-    const orgLevel = selectedOrg.level;
-    const orgType = selectedOrg.type;
-
-    // Corporate - no level
-    if (orgType === 'corporate') return 'n_a';
-
-    // Primary - fixed to "Primary"
-    if (orgType === 'primary') return 'Primary';
-
-    // Based on organization's level setting
-    switch (orgLevel) {
-      case 'o_level': return 'O-Level';
-      case 'a_level': return 'A-Level';
-      case 'tvet': return 'L3';
-      case 'primary': return 'Primary';
-      case 'mixed': return ''; // User must choose
-      default: return '';
-    }
-  };
-
-  /**
-   * Get available level options based on organization
-   */
-  const getLevelOptions = () => {
-    if (!selectedOrg) return [];
-
-    const orgLevel = selectedOrg.level;
-    const orgType = selectedOrg.type;
-
-    if (orgType === 'corporate') return [{ value: 'n_a', label: 'N/A' }];
-    if (orgType === 'primary') return [{ value: 'Primary', label: 'Primary' }];
-
-    switch (orgLevel) {
-      case 'o_level': return [{ value: 'O-Level', label: 'O-Level' }];
-      case 'a_level': return [{ value: 'A-Level', label: 'A-Level' }];
-      case 'tvet': return [
-        { value: 'L3', label: 'L3' },
-        { value: 'L4', label: 'L4' },
-        { value: 'L5', label: 'L5' }
-      ];
-      case 'mixed': return [
-        { value: 'O-Level', label: 'O-Level' },
-        { value: 'A-Level', label: 'A-Level' }
-      ];
-      case 'primary': return [{ value: 'Primary', label: 'Primary' }];
-      default: return [
-        { value: 'O-Level', label: 'O-Level' },
-        { value: 'A-Level', label: 'A-Level' }
-      ];
-    }
-  };
-
-  /**
-   * Check if level field should be disabled (locked to one value)
-   */
-  const isLevelLocked = () => {
-    if (!selectedOrg) return false;
-    const orgLevel = selectedOrg.level;
-    const orgType = selectedOrg.type;
-
-    if (orgType === 'corporate' || orgType === 'primary') return true;
-    return ['o_level', 'a_level', 'primary'].includes(orgLevel);
   };
 
   // ==================== FILTERING ====================
@@ -352,7 +399,12 @@ const Students = () => {
 
       if (formData.personType === 'student') {
         submitData.append('class', formData.class);
-        submitData.append('level', formData.level);
+        // Only send level if not hidden (university/corporate skip)
+        if (!shouldHideLevel()) {
+          submitData.append('level', formData.level);
+        } else {
+          submitData.append('level', 'n_a');
+        }
         submitData.append('academic_year', formData.academic_year);
         submitData.append('parent_phone', formData.parent_phone);
       } else {
@@ -573,6 +625,9 @@ const Students = () => {
   const cardsGenerated = students.filter(s => s.card_generated).length;
   const levelOptions = getLevelOptions();
   const levelLocked = isLevelLocked();
+  const hideLevel = shouldHideLevel();
+  const classPlaceholder = getClassPlaceholder();
+  const classHelperText = getClassHelperText();
 
   return (
     <div className="p-4 sm:p-6 space-y-6">
@@ -621,11 +676,11 @@ const Students = () => {
                   key={org._id}
                   onClick={() => handleOrgChange(org)}
                   className={`px-4 py-2 rounded-xl text-sm font-medium transition-all ${selectedOrg?._id === org._id
-                      ? 'bg-red-600 text-white shadow-lg shadow-red-500/30'
-                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200'
+                    ? 'bg-red-600 text-white shadow-lg shadow-red-500/30'
+                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200'
                     }`}
                 >
-                  <span className="capitalize">{org.type === 'corporate' ? '🏢' : '🏫'}</span> {org.name}
+                  <span className="capitalize">{org.type === 'corporate' ? '🏢' : org.type === 'university' ? '🎓' : '🏫'}</span> {org.name}
                   <span className="ml-2 text-xs opacity-75">({org.stats?.total || 0})</span>
                 </button>
               ))}
@@ -720,8 +775,8 @@ const Students = () => {
                       </td>
                       <td className="px-4 py-3">
                         <span className={`text-xs font-medium px-2 py-1 rounded-full ${student.personType === 'student'
-                            ? 'bg-blue-100 text-blue-700'
-                            : 'bg-purple-100 text-purple-700'
+                          ? 'bg-blue-100 text-blue-700'
+                          : 'bg-purple-100 text-purple-700'
                           }`}>
                           {student.personType === 'student' ? '🎓 Student' : '💼 Employee'}
                         </span>
@@ -732,7 +787,7 @@ const Students = () => {
                           : student.employeeDetails?.department || 'N/A'}
                       </td>
                       <td className="px-4 py-3 text-sm text-slate-600">
-                        {student.studentDetails?.level || 'N/A'}
+                        {student.studentDetails?.level === 'n_a' ? '—' : (student.studentDetails?.level || 'N/A')}
                       </td>
                       <td className="px-4 py-3">
                         {student.has_photo ? (
@@ -833,7 +888,7 @@ const Students = () => {
                 <p className="text-xs text-slate-500">Organization</p>
                 <p className="font-medium text-slate-800 text-sm">{selectedOrg?.name}</p>
                 <p className="text-xs text-slate-500 capitalize">
-                  Type: {selectedOrg?.type} • Level: {selectedOrg?.level || 'mixed'}
+                  Type: {selectedOrg?.type} • {selectedOrg?.type === 'university' ? 'Use Class field for year/section' : selectedOrg?.type === 'corporate' ? 'Use Department field' : `Level: ${selectedOrg?.level || 'mixed'}`}
                 </p>
               </div>
 
@@ -908,40 +963,71 @@ const Students = () => {
               {/* Student-specific fields */}
               {formData.personType === 'student' && (
                 <div className="grid grid-cols-2 gap-4">
-                  <InputField label="Class" name="class" value={formData.class} onChange={handleInputChange} />
+                  {/* Class Field - Always shown, with smart placeholder */}
+                  <div className="col-span-2">
+                    <label className="block text-xs font-medium text-slate-600 mb-1">Class / Section</label>
+                    <input
+                      type="text"
+                      name="class"
+                      value={formData.class}
+                      onChange={handleInputChange}
+                      placeholder={classPlaceholder}
+                      className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm focus:ring-2 focus:ring-red-500"
+                    />
+                    {classHelperText && (
+                      <p className="mt-1 text-xs text-slate-400">{classHelperText}</p>
+                    )}
+                  </div>
 
-                  {/* 🔥 SMART LEVEL SELECTION */}
-                  <div>
-                    <label className="block text-xs font-medium text-slate-600 mb-1">Level</label>
-                    {levelLocked ? (
+                  {/* Level Field - Hidden for University/Corporate, shown for others */}
+                  {!hideLevel && (
+                    <div>
+                      <label className="block text-xs font-medium text-slate-600 mb-1">Level</label>
+                      {levelLocked ? (
+                        <div className="relative">
+                          <input
+                            type="text"
+                            value={formData.level}
+                            disabled
+                            className="w-full px-3 py-2.5 border border-slate-200 bg-slate-100 rounded-xl text-sm text-slate-500 cursor-not-allowed"
+                          />
+                          <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                            <i className="pi pi-lock text-slate-400 text-xs"></i>
+                          </div>
+                        </div>
+                      ) : (
+                        <select
+                          name="level"
+                          value={formData.level}
+                          onChange={handleInputChange}
+                          className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm"
+                        >
+                          <option value="">Select Level</option>
+                          {levelOptions.map(opt => (
+                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Show disabled level field for university/corporate */}
+                  {hideLevel && (
+                    <div>
+                      <label className="block text-xs font-medium text-slate-600 mb-1">Level</label>
                       <div className="relative">
                         <input
                           type="text"
-                          value={formData.level}
+                          value="N/A (use Class field)"
                           disabled
-                          className="w-full px-3 py-2.5 border border-slate-200 bg-slate-100 rounded-xl text-sm text-slate-500 cursor-not-allowed"
+                          className="w-full px-3 py-2.5 border border-slate-200 bg-slate-100 rounded-xl text-sm text-slate-400 cursor-not-allowed"
                         />
                         <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                          <i className="pi pi-lock text-slate-400 text-xs"></i>
+                          <i className="pi pi-info-circle text-slate-400 text-xs"></i>
                         </div>
-                        <p className="mt-1 text-xs text-slate-400">
-                          Locked to organization level ({selectedOrg?.level?.replace('_', ' ') || selectedOrg?.type})
-                        </p>
                       </div>
-                    ) : (
-                      <select
-                        name="level"
-                        value={formData.level}
-                        onChange={handleInputChange}
-                        className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm"
-                      >
-                        <option value="">Select Level</option>
-                        {levelOptions.map(opt => (
-                          <option key={opt.value} value={opt.value}>{opt.label}</option>
-                        ))}
-                      </select>
-                    )}
-                  </div>
+                    </div>
+                  )}
 
                   <InputField label="Academic Year" name="academic_year" value={formData.academic_year} onChange={handleInputChange} />
                   <InputField label="Parent Phone" name="parent_phone" value={formData.parent_phone} onChange={handleInputChange} />
@@ -1022,6 +1108,9 @@ const Students = () => {
                 <p className="text-sm text-slate-600">
                   Importing to: <span className="font-semibold text-slate-800">{selectedOrg?.name || 'Select an organization first'}</span>
                 </p>
+                {selectedOrg?.type === 'university' && (
+                  <p className="text-xs text-blue-600 mt-1">💡 For universities: Put year + section in Class field (e.g., "Year 1 CS-A")</p>
+                )}
               </div>
 
               {!bulkResults ? (
@@ -1031,7 +1120,7 @@ const Students = () => {
                     <ol className="text-sm text-blue-700 space-y-1 list-decimal list-inside">
                       <li>Download the appropriate template below</li>
                       <li>Fill in the data (leave Employee ID blank for auto-generation)</li>
-                      <li>For photos: name each file as <code className="bg-blue-100 px-1 rounded">student_id.jpg</code></li>
+                      <li>For {selectedOrg?.type === 'university' ? 'universities: put year+section in Class column' : 'photos: name each file as student_id.jpg'}</li>
                       <li>Upload CSV + optional photos ZIP</li>
                       <li>Click Import</li>
                     </ol>
@@ -1219,7 +1308,7 @@ const InputField = ({ label, name, value, onChange, type = 'text', error, disabl
     <label className="block text-xs font-medium text-slate-600 mb-1">{label}</label>
     <input type={type} name={name} value={value} onChange={onChange} disabled={disabled}
       className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:ring-2 focus:ring-red-500 ${disabled ? 'border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed' :
-          error ? 'border-red-300 bg-red-50' : 'border-slate-300 bg-slate-50'
+        error ? 'border-red-300 bg-red-50' : 'border-slate-300 bg-slate-50'
         }`} />
     {error && <p className="mt-1 text-xs text-red-500">{error}</p>}
   </div>

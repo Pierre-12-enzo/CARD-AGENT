@@ -100,6 +100,9 @@ async function validateStudentForTemplate(student, template) {
   const missingFields = [];
   const warnings = [];
 
+  console.log(`🔍 Validating ${student.name} against template ${template.name}`);
+  console.log(`Template has ${template.fields?.length || 0} fields`);
+
   for (const field of template.fields) {
     // Skip photo fields - handled separately
     if (field.type === 'photo') continue;
@@ -116,6 +119,8 @@ async function validateStudentForTemplate(student, template) {
       }
     }
 
+    console.log(`Field: ${field.label}, isRequired: ${isRequired}, requirement: ${field.requirement}`);
+
     if (!isRequired) continue;
 
     // Get the actual value
@@ -131,7 +136,6 @@ async function validateStudentForTemplate(student, template) {
           value = field.dataSource.staticValue;
           break;
         case 'computed':
-          // Just check if expression is valid, actual eval happens during generation
           value = field.dataSource.computedExpression ? 'computed' : null;
           break;
       }
@@ -144,12 +148,17 @@ async function validateStudentForTemplate(student, template) {
         'level': student.studentDetails?.level,
         'gender': student.gender,
         'residence': student.residence,
-        'academic_year': student.studentDetails?.academic_year
+        'academic_year': student.studentDetails?.academic_year,
+        'department': student.employeeDetails?.department,
+        'position': student.employeeDetails?.position,
+        'employeeId': student.employeeDetails?.employeeId
       };
       value = autoMap[field.name];
     }
 
     const isValidValue = value !== null && value !== undefined && value !== '';
+
+    console.log(`  Value for ${field.label}: "${value}", isValid: ${isValidValue}`);
 
     if (!isValidValue) {
       missingFields.push({
@@ -172,6 +181,8 @@ async function validateStudentForTemplate(student, template) {
       });
     }
   }
+
+  console.log(`Validation result for ${student.name}: isValid=${missingFields.length === 0}, missing=${missingFields.length}`);
 
   return {
     isValid: missingFields.length === 0,
@@ -221,6 +232,8 @@ async function generateCardWithDynamicFields(student, template, studentPhotoUrl)
 
       // Handle photo fields
       if (field.type === 'photo') {
+        console.log('📸 Photo field styling:', JSON.stringify(field.styling, null, 2));
+
         // Extract photo URL properly using the helper
         let photoUrl = null;
 
@@ -466,6 +479,42 @@ function drawPhotoPlaceholder(ctx, coords, styling = {}) {
   ctx.restore();
 }
 
+// Helper function to ensure photo fields have complete styling
+function ensurePhotoStyling(fields, defaultPersonType = 'student') {
+  const defaultStyling = defaultPersonType === 'student' ? {
+    borderColor: '#005800',
+    borderWidth: 3,
+    borderRadius: 10,
+    placeholderColor: '#10B981',
+    placeholderBg: 'rgba(16, 185, 129, 0.05)',
+    showCameraIcon: true,
+    showPlaceholderText: true,
+    noBorder: false
+  } : {
+    borderColor: '#1e293b',
+    borderWidth: 3,
+    borderRadius: 10,
+    placeholderColor: '#64748b',
+    placeholderBg: 'rgba(30, 41, 59, 0.05)',
+    showCameraIcon: true,
+    showPlaceholderText: true,
+    noBorder: false
+  };
+
+  return fields.map(field => {
+    if (field.type === 'photo') {
+      return {
+        ...field,
+        styling: {
+          ...defaultStyling,
+          ...(field.styling || {})
+        }
+      };
+    }
+    return field;
+  });
+}
+
 // helper function to get PhotouRL
 function getPhotoUrl(student) {
   if (!student) return null;
@@ -572,13 +621,44 @@ router.put('/template/:templateId/fields', authMiddleware, async (req, res) => {
     const { templateId } = req.params;
     const { fields } = req.body;
 
+    console.log('📥 UPDATE TEMPLATE FIELDS - Received');
+
     const template = await Template.findOne({ _id: templateId, companyId: req.user.companyId });
     if (!template) {
       return res.status(404).json({ success: false, error: 'Template not found' });
     }
 
-    template.fields = fields;
+    // ✅ CRITICAL: Ensure photo fields have complete styling
+    const defaultStyling = {
+      borderColor: '#005800',
+      borderWidth: 3,
+      borderRadius: 10,
+      placeholderColor: '#10B981',
+      placeholderBg: 'rgba(16, 185, 129, 0.05)',
+      showCameraIcon: true,
+      showPlaceholderText: true,
+      noBorder: false
+    };
+
+    const updatedFields = fields.map(field => {
+      if (field.type === 'photo') {
+        return {
+          ...field,
+          styling: {
+            ...defaultStyling,
+            ...(field.styling || {})
+          }
+        };
+      }
+      return field;
+    });
+
+    template.fields = updatedFields;
     await template.save();
+
+    // Verify
+    const savedPhotoField = template.fields.find(f => f.type === 'photo');
+    console.log('✅ Saved photo styling:', savedPhotoField?.styling?.borderColor);
 
     res.json({ success: true, message: 'Template fields updated' });
 
@@ -793,44 +873,26 @@ router.get('/organization/:orgId/students', authMiddleware, async (req, res) => 
   }
 });
 
-// ==================== GET BATCH PROGRESS ====================
-router.get('/batch-progress/:batchId', authMiddleware, async (req, res) => {
-  try {
-    const { batchId } = req.params;
-    const progress = progressStore.get(batchId);
-
-    if (!progress) {
-      return res.status(404).json({ success: false, error: 'Batch not found' });
-    }
-
-    res.json({ success: true, progress });
-  } catch (error) {
-    console.error('Get batch progress error:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
 // ==================== BATCH PROCESSING (CSV/UPLOAD) ====================
 router.post('/process-csv-generate',
   authMiddleware,
-  upload.fields([{ name: 'csv', maxCount: 1 }, { name: 'photoZip', maxCount: 1 }]), async (req, res) => {
-    const startTime = Date.now(); // ✅ DECLARE startTime HERE
+  upload.fields([{ name: 'csv', maxCount: 1 }, { name: 'photoZip', maxCount: 1 }]),
+  async (req, res) => {
+    const startTime = Date.now();
 
     try {
-      if (!req.files || !req.files.csv) return res.status(400).json({ success: false, error: 'CSV file is required' });
+      if (!req.user || !req.user.id) {
+        return res.status(401).json({ success: false, error: 'Authentication required' });
+      }
+
+      if (!req.files?.csv) return res.status(400).json({ success: false, error: 'CSV file is required' });
       if (!req.body.templateId) return res.status(400).json({ success: false, error: 'Template ID is required' });
       if (!req.body.organizationId) return res.status(400).json({ success: false, error: 'Organization ID is required' });
 
       const organizationId = req.body.organizationId;
       const batchId = `batch-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
-      // ✅ Verify user is authenticated
-      if (!req.user || !req.user.id) {
-        console.error('❌ No user found in request');
-        return res.status(401).json({ success: false, error: 'Authentication required' });
-      }
-      console.log(`📦 Batch CSV processing started: ${batchId}`);
-
+      // Verify organization
       const org = await School.findOne({ _id: organizationId, companyId: req.user.companyId });
       if (!org) return res.status(404).json({ success: false, error: 'Organization not found' });
 
@@ -841,23 +903,20 @@ router.post('/process-csv-generate',
       const students = await parseCSVFromBuffer(req.files.csv[0].buffer);
       console.log(`📊 Parsed ${students.length} records from CSV`);
 
-      const studentsWithOrg = students.map(student => ({
-        ...student,
-        schoolId: organizationId,
-        companyId: req.user.companyId
-      }));
-
-      // Extract photos
+      // Extract photos from ZIP
       let photoCloudinaryMap = {};
-      if (req.files.photoZip && req.files.photoZip[0]) {
-        console.log('📦 Extracting photos from ZIP...');
-        photoCloudinaryMap = await extractAndUploadPhotosToCloudinary(req.files.photoZip[0].buffer);
-        console.log(`✅ Uploaded ${Object.keys(photoCloudinaryMap).length} photos`);
+      if (req.files.photoZip?.[0]) {
+        try {
+          photoCloudinaryMap = await extractAndUploadPhotosToCloudinary(req.files.photoZip[0].buffer);
+          console.log(`✅ Uploaded ${Object.keys(photoCloudinaryMap).length} photos`);
+        } catch (zipError) {
+          console.error('ZIP processing failed:', zipError.message);
+        }
       }
 
-      // Save students
+      // Save students to database
       const savedStudents = [];
-      for (const studentData of studentsWithOrg) {
+      for (const studentData of students) {
         try {
           const existingStudent = await Student.findOne({
             student_id: studentData.student_id,
@@ -878,6 +937,8 @@ router.post('/process-csv-generate',
           } else {
             const student = new Student({
               ...studentData,
+              schoolId: organizationId,
+              companyId: req.user.companyId,
               photo_url: cloudinaryPhoto?.secure_url,
               photo_public_id: cloudinaryPhoto?.public_id,
               has_photo: !!cloudinaryPhoto
@@ -890,18 +951,19 @@ router.post('/process-csv-generate',
         }
       }
 
-      // VALIDATE each student against template
+      // Filter valid students
       const validStudents = [];
-      const skippedStudents = [];
+      const skippedStudentsList = [];
 
       for (const student of savedStudents) {
         const validation = await validateStudentForTemplate(student, template);
         if (validation.isValid) {
           validStudents.push(student);
         } else {
-          skippedStudents.push({
-            student: { id: student._id, name: student.name, student_id: student.student_id },
-            reasons: validation.missingFields.map(f => f.reason)
+          skippedStudentsList.push({
+            name: student.name,
+            id: student.student_id,
+            reason: `Missing: ${validation.missingFields.map(f => f.fieldLabel).join(', ')}`
           });
         }
       }
@@ -910,11 +972,33 @@ router.post('/process-csv-generate',
         return res.status(400).json({
           success: false,
           error: 'No valid students for this template',
-          skipped: skippedStudents
+          skipped: skippedStudentsList
         });
       }
 
-      // Set response headers for ZIP stream
+      // Store progress
+      progressStore.set(batchId, {
+        batchId,
+        status: 'processing',
+        total: validStudents.length,
+        processed: 0,
+        generated: 0,
+        failed: 0,
+        skipped: skippedStudentsList.length,
+        failedStudents: [],
+        skippedStudents: skippedStudentsList
+      });
+
+      // ✅ EMIT BATCH STARTED with correct total
+      socketService.emit('card:batch-started', {
+        batchId,
+        total: validStudents.length,
+        message: `Starting batch generation for ${validStudents.length} students`,
+        userId: req.user.id
+      });
+
+      // Set response headers
+      res.setHeader('X-Batch-Id', batchId);
       res.set({
         'Content-Type': 'application/zip',
         'Content-Disposition': `attachment; filename="batch-cards-${Date.now()}.zip"`
@@ -927,65 +1011,46 @@ router.post('/process-csv-generate',
       let failedCount = 0;
       const failedStudents = [];
 
-      // Emit batch started event
-      socketService.emit('card:batch-started', {
-        batchId,
-        total: validStudents.length,
-        message: `Starting batch generation for ${validStudents.length} students`
-      });
-
       for (let i = 0; i < validStudents.length; i++) {
         const currentStudent = validStudents[i];
+        const currentIndex = i + 1;
+        const percentage = Math.round((currentIndex / validStudents.length) * 100);
 
-        // Emit progress update
+        // ✅ EMIT PROGRESS EVENT
         socketService.emit('card:batch-progress', {
           batchId,
-          percentage: Math.round(((i + 1) / validStudents.length) * 100),
-          processed: i + 1,
+          type: 'progress',
+          percentage,
+          processed: currentIndex,
           generated: generatedCount,
           failed: failedCount,
+          skipped: skippedStudentsList.length,
           total: validStudents.length,
           currentStudent: {
             name: currentStudent.name,
             id: currentStudent.student_id,
-            index: i + 1,
+            status: 'generating',
+            index: currentIndex,
             total: validStudents.length
           },
-          message: `Generating card for ${currentStudent.name}...`
+          message: `Generating card for ${currentStudent.name}...`,
+          userId: req.user.id
         });
 
         try {
-          // Get photo URL safely
           const photoUrl = getPhotoUrl(currentStudent);
-
-          const { frontBuffer, backBuffer } = await generateCardWithDynamicFields(
-            currentStudent, template, photoUrl
-          );
+          const { frontBuffer, backBuffer } = await generateCardWithDynamicFields(currentStudent, template, photoUrl);
 
           archive.append(frontBuffer, { name: `${currentStudent.student_id}/front-side.png` });
-          if (backBuffer) {
-            archive.append(backBuffer, { name: `${currentStudent.student_id}/back-side.png` });
-          }
+          if (backBuffer) archive.append(backBuffer, { name: `${currentStudent.student_id}/back-side.png` });
 
-          // Update student card generation stats
           currentStudent.card_generated = true;
           currentStudent.card_generation_count = (currentStudent.card_generation_count || 0) + 1;
           currentStudent.last_card_generated = new Date();
           if (!currentStudent.first_card_generated) currentStudent.first_card_generated = new Date();
           await currentStudent.save();
 
-          // ✅ Save successful generation to history
-          await saveCardHistory(
-            currentStudent,
-            template,
-            'batch',
-            batchId,
-            'success',
-            null,
-            Date.now() - startTime,
-            req.user.id
-          );
-
+          await saveCardHistory(currentStudent, template, 'batch', batchId, 'success', null, Date.now() - startTime, req.user.id);
           generatedCount++;
 
         } catch (error) {
@@ -997,46 +1062,50 @@ router.post('/process-csv-generate',
             reason: error.message
           });
 
-          // ✅ Save failed generation to history
-          await saveCardHistory(
-            currentStudent,
-            template,
-            'batch',
-            batchId,
-            'failed',
-            error.message,
-            Date.now() - startTime,
-            req.user.id
-          );
+          await saveCardHistory(currentStudent, template, 'batch', batchId, 'failed', error.message, Date.now() - startTime, req.user.id);
 
+          // ✅ EMIT FAILED EVENT
           socketService.emit('card:batch-progress', {
             batchId,
+            type: 'failed',
+            percentage,
+            processed: currentIndex,
+            generated: generatedCount,
+            failed: failedCount,
+            skipped: skippedStudentsList.length,
+            total: validStudents.length,
             currentStudent: {
               name: currentStudent.name,
               id: currentStudent.student_id,
+              status: 'failed',
               error: error.message,
-              index: i + 1,
+              index: currentIndex,
               total: validStudents.length
-            }
+            },
+            userId: req.user.id
           });
         }
       }
 
-      // Emit completion event
+      // ✅ EMIT BATCH COMPLETE
       socketService.emit('card:batch-complete', {
         batchId,
         stats: {
           total: validStudents.length,
           generated: generatedCount,
-          failed: failedCount
+          failed: failedCount,
+          skipped: skippedStudentsList.length
         },
-        failedStudents: failedStudents,
-        message: `Batch complete! Generated ${generatedCount} of ${validStudents.length} cards.`
+        failedStudents,
+        skippedStudents: skippedStudentsList,
+        message: `✅ Batch complete! Generated ${generatedCount} of ${validStudents.length} cards. Skipped: ${skippedStudentsList.length}, Failed: ${failedCount}`,
+        userId: req.user.id
       });
 
-      archive.finalize();
+      await archive.finalize();
+      console.log(`✅ Batch ${batchId} complete: ${generatedCount} generated, ${failedCount} failed, ${skippedStudentsList.length} skipped`);
 
-      console.log(`✅ Batch ${batchId} complete: ${generatedCount} generated, ${failedCount} failed, ${skippedStudents.length} skipped`);
+      setTimeout(() => progressStore.delete(batchId), 3600000);
 
     } catch (error) {
       console.error('Batch processing error:', error);
@@ -1044,12 +1113,13 @@ router.post('/process-csv-generate',
         res.status(500).json({ success: false, error: error.message });
       }
     }
-  });
+  }
+);
 
 // ==================== BATCH GENERATION FROM DATABASE ====================
 router.post('/generate-batch-from-db', authMiddleware, async (req, res) => {
+  const startTime = Date.now();
 
-  const startTime = Date.now(); // ✅
   try {
     const { templateId, filters, organizationId, personType } = req.body;
 
@@ -1070,29 +1140,15 @@ router.post('/generate-batch-from-db', authMiddleware, async (req, res) => {
       query.personType = personType;
     }
     if (filters) {
-      console.log('📊 Applying filters:', filters);
-
-      if (filters.class && filters.class !== 'all' && filters.class !== '') {
-        query['studentDetails.class'] = filters.class;
-      }
-      if (filters.level && filters.level !== 'all' && filters.level !== '') {
-        query['studentDetails.level'] = filters.level;
-      }
-      if (filters.academic_year && filters.academic_year !== 'all' && filters.academic_year !== '') {
-        query['studentDetails.academic_year'] = filters.academic_year;
-      }
-      if (filters.department && filters.department !== 'all' && filters.department !== '') {
-        query['employeeDetails.department'] = filters.department;
-      }
-      if (filters.position && filters.position !== 'all' && filters.position !== '') {
-        query['employeeDetails.position'] = filters.position;
-      }
+      if (filters.class && filters.class !== 'all' && filters.class !== '') query['studentDetails.class'] = filters.class;
+      if (filters.level && filters.level !== 'all' && filters.level !== '') query['studentDetails.level'] = filters.level;
+      if (filters.academic_year && filters.academic_year !== 'all' && filters.academic_year !== '') query['studentDetails.academic_year'] = filters.academic_year;
+      if (filters.department && filters.department !== 'all' && filters.department !== '') query['employeeDetails.department'] = filters.department;
+      if (filters.position && filters.position !== 'all' && filters.position !== '') query['employeeDetails.position'] = filters.position;
+      if (filters.gender && filters.gender !== 'all' && filters.gender !== '') query.gender = filters.gender;
     }
 
-    console.log('🔍 Final query:', JSON.stringify(query, null, 2));
-
     const students = await Student.find(query);
-    console.log(`✅ Found ${students.length} students matching filters`);
 
     if (students.length === 0) {
       return res.status(404).json({ success: false, error: 'No students found matching the filters' });
@@ -1114,7 +1170,9 @@ router.post('/generate-batch-from-db', authMiddleware, async (req, res) => {
       processed: 0,
       generated: 0,
       failed: 0,
+      skipped: 0,
       failedStudents: [],
+      skippedStudents: [],
       startTime: Date.now()
     });
 
@@ -1132,16 +1190,17 @@ router.post('/generate-batch-from-db', authMiddleware, async (req, res) => {
 
     let generatedCount = 0;
     let failedCount = 0;
+    let skippedCount = 0;
     const failedStudents = [];
+    const skippedStudents = [];
 
     // Emit batch started event
     socketService.emit('card:batch-started', {
       batchId,
       total: students.length,
-      message: `Starting batch generation for ${students.length} students`
+      message: `Starting batch generation for ${students.length} students`,
+      userId: req.user.id
     });
-    console.log(`📡 Emitted card:batch-started for ${batchId}`);
-
 
     for (let i = 0; i < students.length; i++) {
       const rawStudent = students[i];
@@ -1152,39 +1211,43 @@ router.post('/generate-batch-from-db', authMiddleware, async (req, res) => {
         progress.processed = i + 1;
         progress.generated = generatedCount;
         progress.failed = failedCount;
+        progress.skipped = skippedCount;
         progress.percentage = Math.round(((i + 1) / students.length) * 100);
       }
 
       // Validate student before generating
       const validation = await validateStudentForTemplate(rawStudent, template);
+
       if (!validation.isValid) {
         const errorMsg = `Missing: ${validation.missingFields.map(f => f.fieldLabel).join(', ')}`;
-        failedCount++;
-        failedStudents.push({
+        skippedCount++;
+        skippedStudents.push({
           name: rawStudent.name,
           id: rawStudent.student_id,
-          reason: errorMsg
+          reason: errorMsg,
+          missingFields: validation.missingFields.map(f => f.fieldLabel)
         });
 
-        // Emit progress update
+        // Emit skip event
         socketService.emit('card:batch-progress', {
           batchId,
+          type: 'skipped',
           percentage: Math.round(((i + 1) / students.length) * 100),
           processed: i + 1,
           generated: generatedCount,
           failed: failedCount,
+          skipped: skippedCount,
           total: students.length,
           currentStudent: {
             name: rawStudent.name,
             id: rawStudent.student_id,
+            status: 'skipped',
             error: errorMsg,
             index: i + 1,
             total: students.length
-          }
-
+          },
+          userId: req.user.id
         });
-        console.log(`📡 Emitted progress: ${i + 1}/${students.length} (${Math.round(((i + 1) / students.length) * 100)}%)`);
-
         continue;
       }
 
@@ -1197,20 +1260,23 @@ router.post('/generate-batch-from-db', authMiddleware, async (req, res) => {
       // Emit progress update for current student
       socketService.emit('card:batch-progress', {
         batchId,
+        type: 'progress',
         percentage: Math.round(((i + 1) / students.length) * 100),
         processed: i + 1,
         generated: generatedCount,
         failed: failedCount,
+        skipped: skippedCount,
         total: students.length,
         currentStudent: {
           name: student.name,
           id: student.student_id,
+          status: 'generating',
           index: i + 1,
           total: students.length
         },
-        message: `Generating card for ${student.name}...`
+        message: `Generating card for ${student.name}...`,
+        userId: req.user.id
       });
-
 
       try {
         const { frontBuffer, backBuffer } = await generateCardWithDynamicFields(
@@ -1229,7 +1295,7 @@ router.post('/generate-batch-from-db', authMiddleware, async (req, res) => {
         if (!rawStudent.first_card_generated) rawStudent.first_card_generated = new Date();
         await rawStudent.save();
 
-        // ✅ Save successful generation to history
+        // Save successful generation to history
         await saveCardHistory(
           rawStudent,
           template,
@@ -1252,7 +1318,7 @@ router.post('/generate-batch-from-db', authMiddleware, async (req, res) => {
           reason: error.message
         });
 
-        // ✅ Save failed generation to history
+        // Save failed generation to history
         await saveCardHistory(
           rawStudent,
           template,
@@ -1266,13 +1332,16 @@ router.post('/generate-batch-from-db', authMiddleware, async (req, res) => {
 
         socketService.emit('card:batch-progress', {
           batchId,
+          type: 'failed',
           currentStudent: {
             name: student.name,
             id: student.student_id,
+            status: 'failed',
             error: error.message,
             index: i + 1,
             total: students.length
-          }
+          },
+          userId: req.user.id
         });
       }
     }
@@ -1285,7 +1354,9 @@ router.post('/generate-batch-from-db', authMiddleware, async (req, res) => {
       processed: students.length,
       generated: generatedCount,
       failed: failedCount,
+      skipped: skippedCount,
       failedStudents: failedStudents,
+      skippedStudents: skippedStudents,
       percentage: 100
     };
     progressStore.set(batchId, finalProgress);
@@ -1296,16 +1367,19 @@ router.post('/generate-batch-from-db', authMiddleware, async (req, res) => {
       stats: {
         total: students.length,
         generated: generatedCount,
-        failed: failedCount
+        failed: failedCount,
+        skipped: skippedCount
       },
       failedStudents: failedStudents,
-      message: `Batch complete! Generated ${generatedCount} of ${students.length} cards.`
+      skippedStudents: skippedStudents,
+      message: `Batch complete! Generated ${generatedCount} of ${students.length} cards. Skipped: ${skippedCount}, Failed: ${failedCount}`,
+      userId: req.user.id
     });
 
     // Finalize the archive
     await archive.finalize();
 
-    console.log(`✅ Batch ${batchId} complete: ${generatedCount} generated, ${failedCount} failed`);
+    console.log(`✅ Batch ${batchId} complete: ${generatedCount} generated, ${failedCount} failed, ${skippedCount} skipped`);
 
     // Clean up progress store after 1 hour
     setTimeout(() => {

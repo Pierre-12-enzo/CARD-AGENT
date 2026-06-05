@@ -87,7 +87,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-// Helper function to get default fields based on template type
+// Helper function to get default fields based on template type (ALL FIELDS REQUIRED)
 const getDefaultFields = (templateType = 'student') => {
   const isStudent = templateType === 'student';
 
@@ -113,13 +113,13 @@ const getDefaultFields = (templateType = 'student') => {
   };
 
   if (isStudent) {
-    // STUDENT TEMPLATE FIELDS
+    // STUDENT TEMPLATE FIELDS - ALL REQUIRED
     return [
       {
         name: "photo",
         label: "Photo",
         type: "photo",
-        requirement: "optional",
+        requirement: "required",  // ✅ CHANGED from "optional" to "required"
         position: { x: 50, y: 230, width: 250, height: 250 },
         styling: photoStyling
       },
@@ -143,7 +143,7 @@ const getDefaultFields = (templateType = 'student') => {
         name: "class",
         label: "Class",
         type: "text",
-        requirement: "optional",
+        requirement: "required",  // ✅ CHANGED from "optional" to "required"
         position: { x: 580, y: 270, maxWidth: 300, fontSize: 20, isBold: false, textAlign: "left" },
         dataSource: { sourceType: "student_field", fieldPath: "studentDetails.class" }
       },
@@ -151,7 +151,7 @@ const getDefaultFields = (templateType = 'student') => {
         name: "level",
         label: "Level",
         type: "text",
-        requirement: "optional",
+        requirement: "required",  // ✅ CHANGED from "optional" to "required"
         position: { x: 580, y: 320, maxWidth: 500, fontSize: 20, isBold: false, textAlign: "left" },
         dataSource: { sourceType: "student_field", fieldPath: "studentDetails.level" }
       },
@@ -159,7 +159,7 @@ const getDefaultFields = (templateType = 'student') => {
         name: "gender",
         label: "Gender",
         type: "text",
-        requirement: "optional",
+        requirement: "required",  // ✅ CHANGED from "optional" to "required"
         position: { x: 580, y: 375, maxWidth: 300, fontSize: 18, isBold: false, textAlign: "left" },
         dataSource: { sourceType: "student_field", fieldPath: "gender" }
       },
@@ -167,7 +167,7 @@ const getDefaultFields = (templateType = 'student') => {
         name: "residence",
         label: "Residence",
         type: "text",
-        requirement: "optional",
+        requirement: "required",  // ✅ CHANGED from "optional" to "required"
         position: { x: 620, y: 420, maxWidth: 300, fontSize: 18, isBold: false, textAlign: "left" },
         dataSource: { sourceType: "student_field", fieldPath: "residence" }
       },
@@ -175,19 +175,19 @@ const getDefaultFields = (templateType = 'student') => {
         name: "academic_year",
         label: "Academic Year",
         type: "text",
-        requirement: "optional",
+        requirement: "required",  // ✅ CHANGED from "optional" to "required"
         position: { x: 670, y: 472, maxWidth: 300, fontSize: 18, isBold: false, textAlign: "left" },
         dataSource: { sourceType: "student_field", fieldPath: "studentDetails.academic_year" }
       }
     ];
   } else {
-    // EMPLOYEE TEMPLATE FIELDS
+    // EMPLOYEE TEMPLATE FIELDS - ALL REQUIRED
     return [
       {
         name: "photo",
         label: "Photo",
         type: "photo",
-        requirement: "optional",
+        requirement: "required",  // ✅ CHANGED from "optional" to "required"
         position: { x: 50, y: 230, width: 250, height: 250 },
         styling: photoStyling
       },
@@ -211,7 +211,7 @@ const getDefaultFields = (templateType = 'student') => {
         name: "department",
         label: "Department",
         type: "text",
-        requirement: "optional",
+        requirement: "required",  // ✅ CHANGED from "optional" to "required"
         position: { x: 580, y: 270, maxWidth: 400, fontSize: 20, isBold: false, textAlign: "left" },
         dataSource: { sourceType: "employee_field", fieldPath: "employeeDetails.department" }
       },
@@ -219,7 +219,7 @@ const getDefaultFields = (templateType = 'student') => {
         name: "position",
         label: "Position",
         type: "text",
-        requirement: "optional",
+        requirement: "required",  // ✅ CHANGED from "optional" to "required"
         position: { x: 580, y: 320, maxWidth: 400, fontSize: 20, isBold: false, textAlign: "left" },
         dataSource: { sourceType: "employee_field", fieldPath: "employeeDetails.position" }
       },
@@ -227,7 +227,7 @@ const getDefaultFields = (templateType = 'student') => {
         name: "gender",
         label: "Gender",
         type: "text",
-        requirement: "optional",
+        requirement: "required",  // ✅ CHANGED from "optional" to "required"
         position: { x: 580, y: 375, maxWidth: 300, fontSize: 18, isBold: false, textAlign: "left" },
         dataSource: { sourceType: "employee_field", fieldPath: "gender" }
       },
@@ -235,7 +235,7 @@ const getDefaultFields = (templateType = 'student') => {
         name: "residence",
         label: "Residence",
         type: "text",
-        requirement: "optional",
+        requirement: "required",  // ✅ CHANGED from "optional" to "required"
         position: { x: 620, y: 420, maxWidth: 300, fontSize: 18, isBold: false, textAlign: "left" },
         dataSource: { sourceType: "employee_field", fieldPath: "residence" }
       },
@@ -243,7 +243,7 @@ const getDefaultFields = (templateType = 'student') => {
         name: "work_phone",
         label: "Work Phone",
         type: "text",
-        requirement: "optional",
+        requirement: "required",  // ✅ CHANGED from "optional" to "required"
         position: { x: 580, y: 420, maxWidth: 300, fontSize: 18, isBold: false, textAlign: "left" },
         dataSource: { sourceType: "employee_field", fieldPath: "employeeDetails.workPhone" }
       }

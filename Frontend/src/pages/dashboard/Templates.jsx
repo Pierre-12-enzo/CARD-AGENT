@@ -15,7 +15,8 @@ const Templates = () => {
         frontSide: null,
         backSide: null,
         templateType: 'two-sided',
-        setAsDefault: false
+        setAsDefault: false,
+        defaultPersonType: 'student'
     });
 
     useEffect(() => {
@@ -74,6 +75,8 @@ const Templates = () => {
             formData.append('description', newTemplate.description);
             formData.append('frontSide', newTemplate.frontSide);
             formData.append('templateType', newTemplate.templateType);
+            formData.append('defaultPersonType', newTemplate.defaultPersonType);
+
             formData.append('organizationId', selectedOrgId);
             if (newTemplate.backSide) formData.append('backSide', newTemplate.backSide);
             formData.append('setAsDefault', newTemplate.setAsDefault.toString());
@@ -83,7 +86,7 @@ const Templates = () => {
                 setShowUploadModal(false);
                 setNewTemplate({
                     name: '', description: '', frontSide: null, backSide: null,
-                    templateType: 'two-sided', setAsDefault: false
+                    templateType: 'two-sided', setAsDefault: false, defaultPersonType: 'student'
                 });
                 await loadTemplates();
             }
@@ -380,6 +383,40 @@ const UploadModal = ({ newTemplate, setNewTemplate, onSubmit, onCancel, uploadin
                             className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm resize-none focus:ring-2 focus:ring-red-500" />
                     </div>
 
+
+                    {/* Person Type (Student vs Employee) */}
+                    <div>
+                        <label className="block text-xs font-medium text-slate-600 mb-2">
+                            Card Type <span className="text-red-500">*</span>
+                        </label>
+                        <div className="flex gap-3">
+                            <button
+                                type="button"
+                                onClick={() => setNewTemplate(prev => ({ ...prev, defaultPersonType: 'student' }))}
+                                className={`flex-1 p-4 rounded-xl border-2 transition-all text-center ${newTemplate.defaultPersonType === 'student'
+                                    ? 'border-red-500 bg-red-50 shadow-md'
+                                    : 'border-slate-200 hover:border-red-300'
+                                    }`}
+                            >
+                                <i className="pi pi-graduation-cap text-xl mb-1 block text-slate-600"></i>
+                                <span className="font-medium text-sm text-slate-700">Student Card</span>
+                                <p className="text-xs text-slate-500 mt-1">Student ID, Class, Level, Academic Year</p>
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setNewTemplate(prev => ({ ...prev, defaultPersonType: 'employee' }))}
+                                className={`flex-1 p-4 rounded-xl border-2 transition-all text-center ${newTemplate.defaultPersonType === 'employee'
+                                    ? 'border-red-500 bg-red-50 shadow-md'
+                                    : 'border-slate-200 hover:border-red-300'
+                                    }`}
+                            >
+                                <i className="pi pi-briefcase text-xl mb-1 block text-slate-600"></i>
+                                <span className="font-medium text-sm text-slate-700">Employee Card</span>
+                                <p className="text-xs text-slate-500 mt-1">Employee ID, Department, Position, Work Phone</p>
+                            </button>
+                        </div>
+                    </div>
+
                     {/* Type Toggle */}
                     <div>
                         <label className="block text-xs font-medium text-slate-600 mb-2">Template Type</label>
@@ -387,7 +424,7 @@ const UploadModal = ({ newTemplate, setNewTemplate, onSubmit, onCancel, uploadin
                             <button type="button"
                                 onClick={() => setNewTemplate(prev => ({ ...prev, templateType: 'single-sided', backSide: null }))}
                                 className={`flex-1 p-4 rounded-xl border-2 transition-all text-center ${newTemplate.templateType === 'single-sided'
-                                        ? 'border-red-500 bg-red-50' : 'border-slate-200 hover:border-red-300'
+                                    ? 'border-red-500 bg-red-50' : 'border-slate-200 hover:border-red-300'
                                     }`}>
                                 <i className="pi pi-file text-xl mb-1 block text-slate-600"></i>
                                 <span className="font-medium text-sm text-slate-700">Single-sided</span>
@@ -395,13 +432,14 @@ const UploadModal = ({ newTemplate, setNewTemplate, onSubmit, onCancel, uploadin
                             <button type="button"
                                 onClick={() => setNewTemplate(prev => ({ ...prev, templateType: 'two-sided' }))}
                                 className={`flex-1 p-4 rounded-xl border-2 transition-all text-center ${newTemplate.templateType === 'two-sided'
-                                        ? 'border-red-500 bg-red-50' : 'border-slate-200 hover:border-red-300'
+                                    ? 'border-red-500 bg-red-50' : 'border-slate-200 hover:border-red-300'
                                     }`}>
                                 <i className="pi pi-copy text-xl mb-1 block text-slate-600"></i>
                                 <span className="font-medium text-sm text-slate-700">Double-sided</span>
                             </button>
                         </div>
                     </div>
+
 
                     {/* Front Side */}
                     <div>

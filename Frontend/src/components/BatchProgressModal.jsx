@@ -1,5 +1,5 @@
-// components/BatchProgressModal.jsx - Add socket status indicator
-import React, { useEffect, useState } from 'react';
+// components/BatchProgressModal.jsx - UPDATED with close warning and isRunning prop
+import React, { useState } from 'react';
 
 const BatchProgressModal = ({
     isOpen,
@@ -7,15 +7,10 @@ const BatchProgressModal = ({
     progress,
     onDownload,
     batchId,
-    socketReady // Add this prop
+    socketReady,
+    isRunning = false
 }) => {
-
-    useEffect(() => {
-        console.log('Progress updated:', progress);
-    }, [progress]);
-
-    
-    const [expandedFailed, setExpandedFailed] = useState(false);
+    const [activeTab, setActiveTab] = useState('generated');
 
     if (!isOpen) return null;
 
@@ -25,19 +20,18 @@ const BatchProgressModal = ({
         processed = 0,
         generated = 0,
         failed = 0,
+        skipped = 0,
         total = 0,
         currentStudent = null,
         failedStudents = [],
+        skippedStudents = [],
         eta = null,
         message = ''
     } = progress;
 
     const isComplete = status === 'completed';
     const isError = status === 'error';
-    const isGenerating = status === 'generating_cards' || status === 'generating';
-    const isProcessing = status === 'processing' || status === 'started' || isGenerating;
-
-    // Show fallback if socket not ready
+    const isProcessing = status === 'processing' || status === 'started' || status === 'generating';
     const showFallback = !socketReady && isProcessing;
 
     return (
@@ -66,10 +60,7 @@ const BatchProgressModal = ({
                         </div>
                     </div>
                     {(isComplete || isError) && (
-                        <button
-                            onClick={onClose}
-                            className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center hover:bg-slate-200"
-                        >
+                        <button onClick={onClose} className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center hover:bg-slate-200">
                             <i className="pi pi-times text-slate-600"></i>
                         </button>
                     )}
@@ -77,6 +68,17 @@ const BatchProgressModal = ({
 
                 {/* Body */}
                 <div className="p-6 overflow-y-auto max-h-[calc(90vh-180px)]">
+                    {/* Warning if generation is in progress */}
+                    {isProcessing && isRunning && (
+                        <div className="mb-4 bg-red-50 border border-red-200 rounded-xl p-3 flex items-center gap-2">
+                            <i className="pi pi-exclamation-triangle text-red-600"></i>
+                            <div className="text-sm text-red-700">
+                                <span className="font-medium">Do not close this window!</span>
+                                <p className="text-xs mt-0.5">Closing will cancel the generation and you will lose all progress.</p>
+                            </div>
+                        </div>
+                    )}
+
                     {/* Socket Connection Warning */}
                     {showFallback && (
                         <div className="mb-4 bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-center gap-2">
@@ -104,17 +106,21 @@ const BatchProgressModal = ({
                     </div>
 
                     {/* Stats Cards */}
-                    <div className="grid grid-cols-3 gap-3 mb-6">
-                        <div className="bg-slate-50 rounded-xl p-3 text-center">
-                            <p className="text-2xl font-bold text-slate-800">{processed}</p>
+                    <div className="grid grid-cols-4 gap-2 mb-6">
+                        <div className="bg-slate-50 rounded-xl p-2 text-center">
+                            <p className="text-xl font-bold text-slate-800">{processed}</p>
                             <p className="text-xs text-slate-500">Processed</p>
                         </div>
-                        <div className="bg-emerald-50 rounded-xl p-3 text-center">
-                            <p className="text-2xl font-bold text-emerald-600">{generated}</p>
+                        <div className="bg-emerald-50 rounded-xl p-2 text-center">
+                            <p className="text-xl font-bold text-emerald-600">{generated}</p>
                             <p className="text-xs text-emerald-600">Generated ✅</p>
                         </div>
-                        <div className="bg-red-50 rounded-xl p-3 text-center">
-                            <p className="text-2xl font-bold text-red-600">{failed}</p>
+                        <div className="bg-amber-50 rounded-xl p-2 text-center">
+                            <p className="text-xl font-bold text-amber-600">{skipped}</p>
+                            <p className="text-xs text-amber-600">Skipped ⚠️</p>
+                        </div>
+                        <div className="bg-red-50 rounded-xl p-2 text-center">
+                            <p className="text-xl font-bold text-red-600">{failed}</p>
                             <p className="text-xs text-red-600">Failed ❌</p>
                         </div>
                     </div>
@@ -122,12 +128,12 @@ const BatchProgressModal = ({
                     {/* Total count */}
                     {total > 0 && (
                         <div className="text-center text-sm text-slate-500 mb-4">
-                            Total: {total} {total === 1 ? 'student' : 'students'}
+                            Total: {total} {total === 1 ? 'person' : 'people'}
                         </div>
                     )}
 
                     {/* Current Student (during generation) */}
-                    {isProcessing && currentStudent && (
+                    {isProcessing && currentStudent && currentStudent.status !== 'skipped' && currentStudent.status !== 'failed' && (
                         <div className="bg-blue-50 rounded-xl p-4 mb-4">
                             <p className="text-xs text-blue-600 font-medium mb-1">Currently Processing</p>
                             <div className="flex justify-between items-center">
@@ -161,45 +167,96 @@ const BatchProgressModal = ({
                         </div>
                     )}
 
-                    {/* Failed Students List */}
-                    {failedStudents.length > 0 && (
-                        <div className="border border-red-200 rounded-xl overflow-hidden">
-                            <button
-                                onClick={() => setExpandedFailed(!expandedFailed)}
-                                className="w-full px-4 py-3 bg-red-50 flex justify-between items-center hover:bg-red-100 transition-colors"
-                            >
-                                <div className="flex items-center gap-2">
-                                    <i className="pi pi-exclamation-triangle text-red-600"></i>
-                                    <span className="font-medium text-red-700">
-                                        {failedStudents.length} Student{failedStudents.length !== 1 ? 's' : ''} Failed
-                                    </span>
-                                </div>
-                                <i className={`pi pi-chevron-${expandedFailed ? 'up' : 'down'} text-red-600 text-sm`}></i>
-                            </button>
+                    {/* Tabs for Results */}
+                    {(failedStudents.length > 0 || skippedStudents.length > 0) && isComplete && (
+                        <div className="mb-4">
+                            <div className="flex gap-2 border-b border-slate-200">
+                                {generated > 0 && (
+                                    <button
+                                        onClick={() => setActiveTab('generated')}
+                                        className={`px-4 py-2 text-sm font-medium transition-all ${activeTab === 'generated' ? 'text-emerald-600 border-b-2 border-emerald-600' : 'text-slate-500'}`}
+                                    >
+                                        ✅ Generated ({generated})
+                                    </button>
+                                )}
+                                {skippedStudents.length > 0 && (
+                                    <button
+                                        onClick={() => setActiveTab('skipped')}
+                                        className={`px-4 py-2 text-sm font-medium transition-all ${activeTab === 'skipped' ? 'text-amber-600 border-b-2 border-amber-600' : 'text-slate-500'}`}
+                                    >
+                                        ⚠️ Skipped ({skippedStudents.length})
+                                    </button>
+                                )}
+                                {failedStudents.length > 0 && (
+                                    <button
+                                        onClick={() => setActiveTab('failed')}
+                                        className={`px-4 py-2 text-sm font-medium transition-all ${activeTab === 'failed' ? 'text-red-600 border-b-2 border-red-600' : 'text-slate-500'}`}
+                                    >
+                                        ❌ Failed ({failedStudents.length})
+                                    </button>
+                                )}
+                            </div>
 
-                            {expandedFailed && (
-                                <div className="max-h-48 overflow-y-auto divide-y divide-red-100">
-                                    {failedStudents.map((student, idx) => (
-                                        <div key={idx} className="p-3 bg-white">
-                                            <p className="font-medium text-slate-800 text-sm">{student.name}</p>
-                                            <p className="text-xs text-red-600 mt-1">⚠️ {student.reason}</p>
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
+                            <div className="mt-3 max-h-48 overflow-y-auto">
+                                {activeTab === 'skipped' && skippedStudents.length > 0 && (
+                                    <div className="space-y-2">
+                                        {skippedStudents.map((student, idx) => (
+                                            <div key={idx} className="p-3 bg-amber-50 rounded-lg border border-amber-200">
+                                                <p className="font-medium text-slate-800 text-sm">{student.name}</p>
+                                                <p className="text-xs text-amber-600 mt-1">⚠️ {student.reason}</p>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+
+                                {activeTab === 'failed' && failedStudents.length > 0 && (
+                                    <div className="space-y-2">
+                                        {failedStudents.map((student, idx) => (
+                                            <div key={idx} className="p-3 bg-red-50 rounded-lg border border-red-200">
+                                                <p className="font-medium text-slate-800 text-sm">{student.name}</p>
+                                                <p className="text-xs text-red-600 mt-1">❌ {student.reason}</p>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+
+                                {activeTab === 'generated' && generated === 0 && (
+                                    <div className="text-center py-8 text-slate-400">
+                                        <i className="pi pi-info-circle text-3xl mb-2 block"></i>
+                                        <p className="text-sm">No cards were generated</p>
+                                    </div>
+                                )}
+                            </div>
                         </div>
                     )}
                 </div>
 
                 {/* Footer */}
                 <div className="px-6 py-4 border-t border-slate-200 bg-slate-50">
-                    {isComplete && (
+                    {isComplete && generated > 0 && (
+                        <div className="flex gap-3">
+                            <button
+                                onClick={onDownload}
+                                className="flex-1 bg-gradient-to-r from-emerald-500 to-green-600 text-white py-3 rounded-xl font-medium hover:from-emerald-600 hover:to-green-700 transition-all flex items-center justify-center gap-2"
+                            >
+                                <i className="pi pi-download"></i>
+                                Download Batch ZIP ({generated} cards)
+                            </button>
+                            <button
+                                onClick={onClose}
+                                className="flex-1 bg-slate-600 text-white py-3 rounded-xl font-medium hover:bg-slate-700 transition-all"
+                            >
+                                Close
+                            </button>
+                        </div>
+                    )}
+
+                    {isComplete && generated === 0 && (
                         <button
-                            onClick={onDownload}
-                            className="w-full bg-gradient-to-r from-emerald-500 to-green-600 text-white py-3 rounded-xl font-medium hover:from-emerald-600 hover:to-green-700 transition-all flex items-center justify-center gap-2"
+                            onClick={onClose}
+                            className="w-full bg-slate-600 text-white py-3 rounded-xl font-medium hover:bg-slate-700 transition-all"
                         >
-                            <i className="pi pi-download"></i>
-                            Download Batch ZIP ({generated} cards)
+                            Close
                         </button>
                     )}
 
@@ -213,15 +270,23 @@ const BatchProgressModal = ({
                     )}
 
                     {isProcessing && (
-                        <div className="text-center text-xs text-slate-400">
-                            {showFallback ? (
-                                <>
-                                    <i className="pi pi-spinner pi-spin mr-1"></i>
-                                    Connecting to server... Please wait
-                                </>
-                            ) : (
-                                'Please wait... Do not close this window'
-                            )}
+                        <div className="text-center">
+                            <button
+                                onClick={onClose}
+                                className="text-red-600 text-sm underline hover:text-red-700"
+                            >
+                                Cancel Generation
+                            </button>
+                            <div className="text-xs text-slate-400 mt-2">
+                                {showFallback ? (
+                                    <>
+                                        <i className="pi pi-spinner pi-spin mr-1"></i>
+                                        Connecting to server... Please wait
+                                    </>
+                                ) : (
+                                    'Generating cards... Do not close this window'
+                                )}
+                            </div>
                         </div>
                     )}
                 </div>

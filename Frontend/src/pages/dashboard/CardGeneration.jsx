@@ -24,6 +24,7 @@ const CardGeneration = () => {
     const [showProgressModal, setShowProgressModal] = useState(false);
     const [currentBatchId, setCurrentBatchId] = useState(null);
     const [downloadUrl, setDownloadUrl] = useState(null);
+    const [isBatchRunning, setIsBatchRunning] = useState(false); // Track if batch is actively running
 
     // ==================== DATA STATE ====================
     const [organizations, setOrganizations] = useState([]);
@@ -43,8 +44,11 @@ const CardGeneration = () => {
     const [uploadedPhoto, setUploadedPhoto] = useState(null);
     const [photoUploadStatus, setPhotoUploadStatus] = useState('idle');
 
+    const [showMissingFieldsModal, setShowMissingFieldsModal] = useState(false);
+    const [missingFields, setMissingFields] = useState([]);
+
+
     // ==================== QUICK CREATE ====================
-    // In the state declarations (around line 40-50), update quickStudent:
     const [quickStudent, setQuickStudent] = useState({
         student_id: '',
         name: '',
@@ -59,12 +63,11 @@ const CardGeneration = () => {
         position: '',
         employeeId: '',
         workPhone: '',
-        photoFile: null,  // Add this
-        photoPreview: null  // Add this
+        photoFile: null,
+        photoPreview: null
     });
 
     // ==================== BATCH FILTERS ====================
-
     const [batchFilters, setBatchFilters] = useState({
         class: '',
         level: '',
@@ -82,6 +85,7 @@ const CardGeneration = () => {
         positions: [],
         genders: ['Male', 'Female', 'Other']
     });
+
     // ==================== FILES ====================
     const [csvFile, setCsvFile] = useState(null);
     const [photoZipFile, setPhotoZipFile] = useState(null);
@@ -119,10 +123,36 @@ const CardGeneration = () => {
     // ==================== DRAG & DROP ====================
     const [activeDragField, setActiveDragField] = useState(null);
     const previewContainerRef = useRef(null);
+    const abortControllerRef = useRef(null);
 
     const sensors = useSensors(
         useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
     );
+
+    // Expose updateFieldPosition to window for resize handle access
+    useEffect(() => {
+        window.updateFieldPosition = (fieldName, x, y, extra = {}) => {
+            updateFieldPosition(fieldName, x, y, extra);
+        };
+        return () => {
+            delete window.updateFieldPosition;
+        };
+    }, []);
+
+    // Monitor batch progress to update running state and generation status
+    useEffect(() => {
+        if (batchProgress.status === 'generating' || batchProgress.status === 'started' || batchProgress.status === 'processing') {
+            setIsBatchRunning(true);
+            setGenerationStatus('processing');
+        } else if (batchProgress.status === 'completed' || batchProgress.status === 'error') {
+            setIsBatchRunning(false);
+            if (batchProgress.status === 'completed') {
+                setGenerationStatus('completed');
+            } else {
+                setGenerationStatus('error');
+            }
+        }
+    }, [batchProgress.status]);
 
     // ==================== LOAD DATA ====================
     useEffect(() => {
@@ -169,7 +199,6 @@ const CardGeneration = () => {
             console.error('Failed to fetch filter options:', error);
         }
     };
-
 
     const loadOrganizations = async () => {
         try {
@@ -246,7 +275,33 @@ const CardGeneration = () => {
         }
     };
 
-    // ==================== DRAG & DROP HANDLER (CONVERTS SCREEN TO ORIGINAL COORDS) ====================
+    // ==================== GET FILTERED BATCH STUDENTS ====================
+    const getFilteredBatchStudents = useCallback(() => {
+        return students.filter(student => {
+            // Person type filter
+            if (personFilter !== 'all' && student.personType !== personFilter) return false;
+
+            // Student-specific filters
+            if (student.personType === 'student') {
+                if (batchFilters.class && student.studentDetails?.class !== batchFilters.class) return false;
+                if (batchFilters.level && student.studentDetails?.level !== batchFilters.level) return false;
+                if (batchFilters.academic_year && student.studentDetails?.academic_year !== batchFilters.academic_year) return false;
+            }
+
+            // Employee-specific filters
+            if (student.personType === 'employee') {
+                if (batchFilters.department && student.employeeDetails?.department !== batchFilters.department) return false;
+                if (batchFilters.position && student.employeeDetails?.position !== batchFilters.position) return false;
+            }
+
+            // Gender filter
+            if (batchFilters.gender && student.gender !== batchFilters.gender) return false;
+
+            return true;
+        });
+    }, [students, personFilter, batchFilters]);
+
+    // ==================== DRAG & DROP HANDLER ====================
     const handleDragStart = useCallback((event) => {
         setActiveDragField(event.active.id);
     }, []);
@@ -258,12 +313,6 @@ const CardGeneration = () => {
         }));
     };
 
-    // Convert original coordinates to preview display coordinates
-    const getPreviewPosition = (originalX, originalY) => {
-        const scale = templateDimensions.scaleFactor;
-        return { x: originalX * scale, y: originalY * scale };
-    };
-
     // ==================== FIELD MAPPING HANDLERS ====================
     const handleSaveFieldMappings = async (updatedFields, mappings) => {
         try {
@@ -272,7 +321,6 @@ const CardGeneration = () => {
             setShowFieldMapper(false);
             toast.success('Field mappings saved successfully');
 
-            // 🔥 RELOAD THE TEMPLATE to get updated fields
             const refreshedTemplate = await cardAPI.getTemplate(selectedTemplateId);
             if (refreshedTemplate.success) {
                 setSelectedTemplate(refreshedTemplate.template);
@@ -316,6 +364,7 @@ const CardGeneration = () => {
 
     // ==================== SINGLE CARD GENERATION ====================
     const generateSingleCard = async (student) => {
+        console.log('Generating single card for:', student?._id, 'with template:', selectedTemplateId);
         if (!selectedTemplateId || !student) {
             toast.error('Select a template and person');
             return;
@@ -324,6 +373,19 @@ const CardGeneration = () => {
         setGenerationStatus('processing');
 
         try {
+            const validation = await cardAPI.previewValidation({
+                templateId: selectedTemplateId,
+                studentId: student._id,
+                personType: student.personType
+            });
+
+            if (!validation.isValid) {
+                setMissingFields(validation.missingFields || []);
+                setShowMissingFieldsModal(true);
+                setGenerationStatus('idle');
+                return;
+            }
+
             const blob = await cardAPI.generateSingle({
                 studentId: student._id,
                 templateId: selectedTemplateId,
@@ -333,7 +395,7 @@ const CardGeneration = () => {
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `id-card-${student.student_id}.zip`;
+            a.download = `id-card-${student.student_id || student.employeeId || 'person'}.zip`;
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
@@ -349,7 +411,18 @@ const CardGeneration = () => {
         }
     };
 
-
+    // ==================== AUTO DOWNLOAD AFTER BATCH COMPLETION ====================
+    useEffect(() => {
+        if (batchProgress.status === 'completed' && batchProgress.generated > 0 && downloadUrl) {
+            const a = document.createElement('a');
+            a.href = downloadUrl;
+            a.download = `batch-cards-${Date.now()}.zip`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            toast.success(`${batchProgress.generated} cards generated successfully! Download started.`);
+        }
+    }, [batchProgress.status, batchProgress.generated, downloadUrl]);
 
     // ==================== BATCH GENERATION (WITH WEBSOCKET PROGRESS) ====================
     const startBatchGeneration = async () => {
@@ -358,61 +431,45 @@ const CardGeneration = () => {
             return;
         }
 
+        if (batchMethod === 'upload' && !csvFile) {
+            toast.error('Please select a CSV file');
+            return;
+        }
+
+        // Create new abort controller for this batch
+        abortControllerRef.current = new AbortController();
+
         setShowProgressModal(true);
         setCurrentBatchId(null);
         resetBatchProgress();
         setGenerationStatus('processing');
         setDownloadUrl(null);
+        setIsBatchRunning(true);
 
         try {
             let blob;
             if (batchMethod === 'database') {
-                // Batch from database
-                const filteredStudentsList = students.filter(student => {
-                    // Person type filter
-                    if (personFilter !== 'all' && student.personType !== personFilter) return false;
+                const filteredStudents = getFilteredBatchStudents();
 
-                    // Student-specific filters
-                    if (student.personType === 'student') {
-                        if (batchFilters.class && student.studentDetails?.class !== batchFilters.class) return false;
-                        if (batchFilters.level && student.studentDetails?.level !== batchFilters.level) return false;
-                        if (batchFilters.academic_year && student.studentDetails?.academic_year !== batchFilters.academic_year) return false;
-                    }
-
-                    // Employee-specific filters
-                    if (student.personType === 'employee') {
-                        if (batchFilters.department && student.employeeDetails?.department !== batchFilters.department) return false;
-                        if (batchFilters.position && student.employeeDetails?.position !== batchFilters.position) return false;
-                    }
-
-                    // Gender filter
-                    if (batchFilters.gender && student.gender !== batchFilters.gender) return false;
-
-                    return true;
-                });
-
-                if (filteredStudentsList.length === 0) {
-                    toast.error('No students match your filters');
+                if (filteredStudents.length === 0) {
+                    toast.error('No people match your filters');
                     setShowProgressModal(false);
                     setGenerationStatus('idle');
+                    setIsBatchRunning(false);
                     return;
                 }
 
-                console.log('Starting batch generation for', filteredStudentsList.length, 'students');
+                console.log('Starting batch generation for', filteredStudents.length, 'people');
 
-                // ✅ USE THE API METHOD
                 blob = await cardAPI.generateBatchFromDB({
                     templateId: selectedTemplateId,
                     filters: batchFilters,
                     organizationId: selectedOrgId,
                     personType: personFilter
+                }, {
+                    signal: abortControllerRef.current.signal
                 });
-
-                // Note: axios doesn't expose custom headers easily in blob responses
-                // We'll rely on WebSocket for batch ID
-
             } else {
-                // Batch from CSV/ZIP upload
                 const formData = new FormData();
                 formData.append('csv', csvFile);
                 formData.append('templateId', selectedTemplateId);
@@ -421,41 +478,64 @@ const CardGeneration = () => {
                 if (photoZipFile) formData.append('photoZip', photoZipFile);
                 if (personFilter !== 'all') formData.append('personType', personFilter);
 
-                // ✅ USE THE API METHOD
-                blob = await cardAPI.processCSVAndGenerate(formData);
+                blob = await cardAPI.processCSVAndGenerate(formData, {
+                    signal: abortControllerRef.current.signal
+                });
             }
 
-            // Create download URL from blob
             const url = window.URL.createObjectURL(blob);
             setDownloadUrl(url);
-            setGenerationStatus('completed');
-
-            // Auto-download the file
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `batch-cards-${Date.now()}.zip`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-
-            // Clean up
-            setTimeout(() => {
-                window.URL.revokeObjectURL(url);
-                setDownloadUrl(null);
-                setShowProgressModal(false);
-                resetBatchProgress();
-            }, 3000);
-
-            toast.success('Cards generated successfully! Download started.');
 
         } catch (error) {
-            console.error('Batch generation error:', error);
-            const errorMessage = error.response?.data?.error || error.message || 'Generation failed';
-            toast.error(`Generation failed: ${errorMessage}`);
+            if (error.name === 'AbortError' || error.code === 'ERR_CANCELED') {
+                console.log('Batch generation was cancelled by user');
+                toast.error('Batch generation was cancelled');
+            } else {
+                console.error('Batch generation error:', error);
+                const errorMessage = error.response?.data?.error || error.message || 'Generation failed';
+                toast.error(`Generation failed: ${errorMessage}`);
+            }
             setShowProgressModal(false);
             setGenerationStatus('error');
+            setIsBatchRunning(false);
         }
     };
+
+    // Cancel batch generation
+    const cancelBatchGeneration = () => {
+        if (abortControllerRef.current) {
+            abortControllerRef.current.abort();
+            abortControllerRef.current = null;
+        }
+        setIsBatchRunning(false);
+        setGenerationStatus('idle');
+        resetBatchProgress();
+    };
+
+    const handleCloseProgressModal = () => {
+        if (isBatchRunning && batchProgress.status === 'generating') {
+            // Show warning if generation is still in progress
+            const confirmClose = window.confirm(
+                '⚠️ Warning: Cards are still being generated!\n\n' +
+                'If you close this window, the generation will be cancelled and you will lose all progress.\n\n' +
+                'Are you sure you want to cancel?'
+            );
+            if (confirmClose) {
+                cancelBatchGeneration();
+                setShowProgressModal(false);
+                setDownloadUrl(null);
+                toast.info('Batch generation cancelled');
+            }
+        } else {
+            // Safe to close
+            setShowProgressModal(false);
+            resetBatchProgress();
+            setDownloadUrl(null);
+            setIsBatchRunning(false);
+            setGenerationStatus('idle');
+        }
+    };
+
     const handleDownload = () => {
         if (downloadUrl) {
             const a = document.createElement('a');
@@ -464,9 +544,7 @@ const CardGeneration = () => {
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
-            window.URL.revokeObjectURL(downloadUrl);
-            setDownloadUrl(null);
-            setShowProgressModal(false);
+            toast.success('Download started!');
         }
     };
 
@@ -517,17 +595,14 @@ const CardGeneration = () => {
         }
 
         try {
-            // Prepare form data for multipart upload (supports photo)
             const formData = new FormData();
 
-            // Add basic info
             formData.append('name', quickStudent.name);
             formData.append('personType', quickStudent.personType);
             formData.append('gender', quickStudent.gender);
             formData.append('residence', quickStudent.residence);
             formData.append('organizationId', selectedOrgId);
 
-            // Add student-specific fields
             if (quickStudent.personType === 'student') {
                 formData.append('student_id', quickStudent.student_id);
                 formData.append('class', quickStudent.class);
@@ -536,7 +611,6 @@ const CardGeneration = () => {
                 if (quickStudent.parent_phone) formData.append('parent_phone', quickStudent.parent_phone);
             }
 
-            // Add employee-specific fields
             if (quickStudent.personType === 'employee') {
                 if (quickStudent.employeeId) formData.append('employeeId', quickStudent.employeeId);
                 if (quickStudent.department) formData.append('department', quickStudent.department);
@@ -544,23 +618,19 @@ const CardGeneration = () => {
                 if (quickStudent.workPhone) formData.append('workPhone', quickStudent.workPhone);
             }
 
-            // Add photo if selected
             if (quickStudent.photoFile) {
                 formData.append('photo', quickStudent.photoFile);
             }
 
-            // Use studentAPI.create which supports FormData with photo
             const response = await studentAPI.create(formData);
 
             if (response && response._id) {
                 toast.success(`${quickStudent.personType === 'student' ? 'Student' : 'Employee'} created successfully!`);
 
-                // Clean up preview URL
                 if (quickStudent.photoPreview) {
                     URL.revokeObjectURL(quickStudent.photoPreview);
                 }
 
-                // Close modal and reset form
                 setShowQuickCreateModal(false);
                 setQuickStudent({
                     student_id: '', name: '', personType: 'student',
@@ -570,10 +640,7 @@ const CardGeneration = () => {
                     photoFile: null, photoPreview: null
                 });
 
-                // Refresh student list
                 await loadOrgStudents();
-
-                // Select the newly created student
                 setSelectedStudent(response);
                 setActiveStep('process');
             }
@@ -585,24 +652,27 @@ const CardGeneration = () => {
         }
     };
 
-    // ==================== FILTERED STUDENTS ====================
-    const filteredStudentsList = students.filter(student => {
-        const term = searchTerm.toLowerCase().trim();
-        let matches = true;
-        if (term) {
-            matches = (student.name?.toLowerCase() || '').includes(term) ||
-                (student.student_id?.toLowerCase() || '').includes(term);
-        }
-        if (personFilter !== 'all') {
-            matches = matches && student.personType === personFilter;
-        }
-        return matches;
-    });
+    // ==================== FILTERED STUDENTS (for search) ====================
+    const filteredStudentsList = useMemo(() => {
+        return students.filter(student => {
+            const term = searchTerm.toLowerCase().trim();
+            let matches = true;
+            if (term) {
+                matches = (student.name?.toLowerCase() || '').includes(term) ||
+                    (student.student_id?.toLowerCase() || '').includes(term) ||
+                    (student.employeeDetails?.employeeId?.toLowerCase() || '').includes(term);
+            }
+            if (personFilter !== 'all') {
+                matches = matches && student.personType === personFilter;
+            }
+            return matches;
+        });
+    }, [students, searchTerm, personFilter]);
 
     const studentCount = students.filter(s => s.personType === 'student').length;
     const employeeCount = students.filter(s => s.personType === 'employee').length;
     const selectedOrg = organizations.find(o => o._id === selectedOrgId);
-    // Get sample student for batch preview
+
     const sampleStudent = useMemo(() => {
         if (students.length > 0) {
             return students[0];
@@ -610,21 +680,19 @@ const CardGeneration = () => {
         return null;
     }, [students]);
 
-    // Preview container style
-    const previewContainerStyle = {
-        position: 'relative',
-        width: `${templateDimensions.previewWidth}px`,
-        height: `${templateDimensions.previewHeight}px`,
-        backgroundColor: '#1e293b',
-        borderRadius: '12px',
-        overflow: 'hidden',
-        margin: '0 auto'
-    };
-
     // ==================== FIELD POSITION SYNC ====================
-    // Update a field's position in the template
     const updateFieldPosition = useCallback((fieldName, x, y, extra = {}) => {
         if (!selectedTemplate) return;
+
+        let width = extra.width;
+        let height = extra.height;
+
+        if (width !== undefined) {
+            width = Math.round(width / templateDimensions.scaleFactor);
+        }
+        if (height !== undefined) {
+            height = Math.round(height / templateDimensions.scaleFactor);
+        }
 
         const updatedFields = selectedTemplate.fields.map(field => {
             if (field.name === fieldName) {
@@ -634,6 +702,8 @@ const CardGeneration = () => {
                         ...field.position,
                         x: x,
                         y: y,
+                        ...(width !== undefined && { width: width }),
+                        ...(height !== undefined && { height: height }),
                         ...extra
                     }
                 };
@@ -641,14 +711,12 @@ const CardGeneration = () => {
             return field;
         });
 
-        // Update local state
         setSelectedTemplate(prev => ({
             ...prev,
             fields: updatedFields
         }));
-    }, [selectedTemplate]);
+    }, [selectedTemplate, templateDimensions.scaleFactor]);
 
-    // Save all field positions to backend
     const saveFieldPositions = async () => {
         if (!selectedTemplate || !selectedTemplate.fields) return;
 
@@ -660,7 +728,6 @@ const CardGeneration = () => {
         }
     };
 
-    // Update handleDragEnd to work with template fields
     const handleDragEnd = useCallback((event) => {
         const { active, delta } = event;
         if (!active || !previewContainerRef.current || !selectedTemplate) return;
@@ -671,7 +738,6 @@ const CardGeneration = () => {
         const field = selectedTemplate.fields.find(f => f.name === fieldName);
         if (!field || !field.position) return;
 
-        // Convert screen delta to original coordinate delta
         const scaleFactor = templateDimensions.scaleFactor;
         const deltaX_original = Math.round(delta.x / scaleFactor);
         const deltaY_original = Math.round(delta.y / scaleFactor);
@@ -780,7 +846,49 @@ const CardGeneration = () => {
                 </div>
             </div>
 
-            {/* Rest of the component continues in Part 2 */}
+            {/* Missing Fields Modal */}
+            {showMissingFieldsModal && (
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+                    <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl animate-scale-in">
+                        <div className="text-center mb-4">
+                            <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                                <i className="pi pi-exclamation-triangle text-amber-600 text-2xl"></i>
+                            </div>
+                            <h3 className="text-xl font-bold text-slate-800">Cannot Generate Card</h3>
+                            <p className="text-slate-500 mt-1">Missing required information</p>
+                        </div>
+
+                        <div className="bg-amber-50 rounded-xl p-4 mb-4">
+                            <p className="text-sm font-medium text-amber-800 mb-2">Required fields missing:</p>
+                            <ul className="space-y-1">
+                                {missingFields.map((field, idx) => (
+                                    <li key={idx} className="text-sm text-amber-700 flex items-center gap-2">
+                                        <i className="pi pi-times-circle text-amber-500 text-xs"></i>
+                                        {field.fieldLabel}
+                                    </li>
+                                ))}
+                            </ul>
+                        </div>
+
+                        <div className="flex gap-3">
+                            <button
+                                onClick={() => setShowMissingFieldsModal(false)}
+                                className="flex-1 px-4 py-2.5 border border-slate-300 rounded-xl text-slate-700 font-medium hover:bg-slate-50"
+                            >
+                                Close
+                            </button>
+                            <button
+                                onClick={() => {
+                                    setShowMissingFieldsModal(false);
+                                }}
+                                className="flex-1 bg-gradient-to-r from-red-600 to-red-500 text-white py-2.5 rounded-xl font-medium hover:from-red-700 hover:to-red-600"
+                            >
+                                Edit Student
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 {/* Left Panel - Controls */}
@@ -827,7 +935,6 @@ const CardGeneration = () => {
                                             </div>
                                         ) : (
                                             <>
-                                                {/* Person Type Filter */}
                                                 <div className="flex gap-2">
                                                     <button
                                                         onClick={() => setPersonFilter('all')}
@@ -849,7 +956,6 @@ const CardGeneration = () => {
                                                     </button>
                                                 </div>
 
-                                                {/* Dynamic Filters based on personType */}
                                                 {personFilter !== 'employee' && (
                                                     <div className="grid grid-cols-2 gap-2">
                                                         <select
@@ -910,7 +1016,6 @@ const CardGeneration = () => {
                                                     </div>
                                                 )}
 
-                                                {/* Gender Filter */}
                                                 <select
                                                     value={batchFilters.gender}
                                                     onChange={(e) => setBatchFilters(prev => ({ ...prev, gender: e.target.value }))}
@@ -922,17 +1027,13 @@ const CardGeneration = () => {
                                                     ))}
                                                 </select>
 
-                                                {/* Show filtered count */}
                                                 <div className="bg-red-50 border border-red-200 rounded-xl p-4">
                                                     <p className="font-medium text-red-800">
-                                                        {filteredStudentsList.length} people match your filters
+                                                        {getFilteredBatchStudents().length} people match your filters
                                                     </p>
                                                     <p className="text-sm text-red-600 mt-1">
                                                         From {selectedOrg?.name}
                                                     </p>
-                                                    {batchFilters.class && <p className="text-xs text-red-500 mt-1">Class: {batchFilters.class}</p>}
-                                                    {batchFilters.level && <p className="text-xs text-red-500">Level: {batchFilters.level}</p>}
-                                                    {batchFilters.department && <p className="text-xs text-red-500">Department: {batchFilters.department}</p>}
                                                 </div>
                                             </>
                                         )}
@@ -982,7 +1083,7 @@ const CardGeneration = () => {
                                                 className="w-full px-4 py-3 border border-slate-300 rounded-xl text-left flex justify-between items-center hover:border-red-300 transition-colors"
                                             >
                                                 <span className={selectedStudent ? 'text-slate-800' : 'text-slate-400'}>
-                                                    {selectedStudent ? `${selectedStudent.name} (${selectedStudent.student_id})` : 'Select existing person...'}
+                                                    {selectedStudent ? `${selectedStudent.name} (${selectedStudent.student_id || selectedStudent.employeeDetails?.employeeId})` : 'Select existing person...'}
                                                 </span>
                                                 <i className={`pi pi-chevron-${showStudentSelect ? 'up' : 'down'} text-slate-500`}></i>
                                             </button>
@@ -1013,7 +1114,7 @@ const CardGeneration = () => {
                                                                 <div>
                                                                     <div className="font-medium text-slate-800 text-sm">{s.name}</div>
                                                                     <div className="text-xs text-slate-500">
-                                                                        {s.student_id} • {s.personType === 'student' ? '🎓' : '💼'} {s.studentDetails?.class || s.employeeDetails?.department || ''}
+                                                                        {s.student_id || s.employeeDetails?.employeeId} • {s.personType === 'student' ? '🎓' : '💼'} {s.studentDetails?.class || s.employeeDetails?.department || ''}
                                                                     </div>
                                                                 </div>
                                                                 <div className="flex gap-1">
@@ -1097,7 +1198,6 @@ const CardGeneration = () => {
                                 <button
                                     onClick={() => {
                                         if (!selectedTemplateId) { toast.error('Select a template'); return; }
-                                        // Check if template has fields defined, if not, show field mapper
                                         const template = templates.find(t => t._id === selectedTemplateId);
                                         if (!template?.fields || template.fields.length === 0) {
                                             toast.warning('This template has no fields defined. Please map fields first.');
@@ -1125,7 +1225,6 @@ const CardGeneration = () => {
                             />
                         )}
 
-
                         {/* ==================== STEP 4: COORDINATES (DRAG & DROP WITH DYNAMIC FIELDS) ==================== */}
                         {activeStep === 'coordinates' && (
                             <div className="space-y-4">
@@ -1137,7 +1236,7 @@ const CardGeneration = () => {
                                         </p>
                                         {generationMode === 'single' && selectedStudent && (
                                             <p className="text-xs text-blue-600 mt-1">
-                                                Previewing data for: {selectedStudent.name} ({selectedStudent.student_id})
+                                                Previewing data for: {selectedStudent.name} ({selectedStudent.student_id || selectedStudent.employeeDetails?.employeeId})
                                             </p>
                                         )}
                                     </div>
@@ -1162,7 +1261,6 @@ const CardGeneration = () => {
                                             <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
                                                 <div ref={previewContainerRef} className="relative border-2 border-slate-300 rounded-xl overflow-hidden shadow-inner bg-slate-900" style={{ width: `${templateDimensions.previewWidth}px`, margin: '0 auto' }}>
 
-                                                    {/* Template Image */}
                                                     <img
                                                         src={selectedTemplate.frontSide.secure_url}
                                                         alt="Template"
@@ -1179,7 +1277,6 @@ const CardGeneration = () => {
                                                         }}
                                                     />
 
-                                                    {/* Grid Overlay */}
                                                     <div className="absolute inset-0 pointer-events-none opacity-10">
                                                         <div className="grid grid-cols-12 h-full w-full">
                                                             {Array.from({ length: 12 }).map((_, i) => (<div key={i} className="border-r border-white h-full"></div>))}
@@ -1187,7 +1284,6 @@ const CardGeneration = () => {
                                                         </div>
                                                     </div>
 
-                                                    {/* Draggable Fields - Using REAL student data for preview */}
                                                     {selectedTemplate.fields.map((field) => {
                                                         if (!field.position) return null;
 
@@ -1195,11 +1291,9 @@ const CardGeneration = () => {
                                                         const previewX = (field.position.x || 0) * scale;
                                                         const previewY = (field.position.y || 0) * scale;
 
-                                                        // Get REAL data from selected student (for single mode) or sample student (for batch mode)
                                                         const getFieldPreviewValue = () => {
                                                             if (field.type === 'photo') return '📷 Photo';
 
-                                                            // For single card mode - use selected student data
                                                             if (generationMode === 'single' && selectedStudent) {
                                                                 if (field.dataSource?.fieldPath) {
                                                                     const parts = field.dataSource.fieldPath.split('.');
@@ -1209,7 +1303,6 @@ const CardGeneration = () => {
                                                                     }
                                                                     if (value) return String(value).substring(0, 30);
                                                                 }
-                                                                // Auto-detect common fields
                                                                 const autoMap = {
                                                                     'name': selectedStudent.name,
                                                                     'student_id': selectedStudent.student_id,
@@ -1225,7 +1318,6 @@ const CardGeneration = () => {
                                                                 return field.label || field.name;
                                                             }
 
-                                                            // For batch mode - use sample student (first student)
                                                             if (sampleStudent) {
                                                                 if (field.dataSource?.fieldPath) {
                                                                     const parts = field.dataSource.fieldPath.split('.');
@@ -1250,8 +1342,15 @@ const CardGeneration = () => {
                                                             return field.label || field.name;
                                                         };
 
-                                                        const isPhotoField = field.type === 'photo';
                                                         const displayText = getFieldPreviewValue();
+
+                                                        // For photo fields, pass the properly scaled dimensions
+                                                        const photoWidth = field.type === 'photo' && field.position?.width
+                                                            ? field.position.width * scale
+                                                            : undefined;
+                                                        const photoHeight = field.type === 'photo' && field.position?.height
+                                                            ? field.position.height * scale
+                                                            : undefined;
 
                                                         return (
                                                             <DraggableItem
@@ -1260,8 +1359,15 @@ const CardGeneration = () => {
                                                                 displayX={previewX}
                                                                 displayY={previewY}
                                                                 label={displayText}
-                                                                isPhotoField={isPhotoField}
+                                                                isPhotoField={field.type === 'photo'}
                                                                 isActive={activeDragField === field.name}
+                                                                field={field}
+                                                                sampleStudent={sampleStudent}
+                                                                selectedStudent={selectedStudent}
+                                                                generationMode={generationMode}
+                                                                previewScale={scale}
+                                                                previewPhotoWidth={photoWidth}
+                                                                previewPhotoHeight={photoHeight}
                                                                 onPositionChange={(newX, newY) => {
                                                                     updateFieldPosition(field.name, newX, newY);
                                                                 }}
@@ -1277,7 +1383,6 @@ const CardGeneration = () => {
                                             </div>
                                         )}
 
-                                        {/* Template Info Bar */}
                                         <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-700 flex justify-between flex-wrap gap-2">
                                             <span>📐 Original: {templateDimensions.originalWidth}×{templateDimensions.originalHeight}</span>
                                             <span>🖥️ Preview: {templateDimensions.previewWidth}×{templateDimensions.previewHeight}</span>
@@ -1288,7 +1393,6 @@ const CardGeneration = () => {
                                             )}
                                         </div>
 
-                                        {/* Fine-tune Coordinates Table */}
                                         <div className="bg-slate-50 rounded-xl p-4 border border-slate-200">
                                             <p className="text-xs font-medium text-slate-600 mb-3">🎯 Fine-Tune Coordinates (Original Dimensions)</p>
                                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-64 overflow-y-auto">
@@ -1307,11 +1411,25 @@ const CardGeneration = () => {
                                                             <>
                                                                 <div className="flex items-center gap-1 ml-1">
                                                                     <span className="text-[10px] text-slate-400">W</span>
-                                                                    <input type="number" value={field.position?.width || 250} onChange={(e) => updateFieldPosition(field.name, field.position?.x || 0, field.position?.y || 0, { width: parseInt(e.target.value) || 250 })} className="w-14 px-1.5 py-1 border border-slate-200 rounded-md text-xs text-center" />
+                                                                    <input
+                                                                        type="number"
+                                                                        value={field.position?.width || 250}
+                                                                        onChange={(e) => updateFieldPosition(field.name, field.position?.x || 0, field.position?.y || 0, { width: parseInt(e.target.value) || 250 })}
+                                                                        className="w-14 px-1.5 py-1 border border-slate-200 rounded-md text-xs text-center"
+                                                                        min="50"
+                                                                        max="500"
+                                                                    />
                                                                 </div>
                                                                 <div className="flex items-center gap-1">
                                                                     <span className="text-[10px] text-slate-400">H</span>
-                                                                    <input type="number" value={field.position?.height || 250} onChange={(e) => updateFieldPosition(field.name, field.position?.x || 0, field.position?.y || 0, { height: parseInt(e.target.value) || 250 })} className="w-14 px-1.5 py-1 border border-slate-200 rounded-md text-xs text-center" />
+                                                                    <input
+                                                                        type="number"
+                                                                        value={field.position?.height || 250}
+                                                                        onChange={(e) => updateFieldPosition(field.name, field.position?.x || 0, field.position?.y || 0, { height: parseInt(e.target.value) || 250 })}
+                                                                        className="w-14 px-1.5 py-1 border border-slate-200 rounded-md text-xs text-center"
+                                                                        min="50"
+                                                                        max="500"
+                                                                    />
                                                                 </div>
                                                             </>
                                                         )}
@@ -1334,7 +1452,6 @@ const CardGeneration = () => {
                             <div className="space-y-6 text-center">
                                 <h3 className="text-lg font-semibold text-slate-800">Ready to Generate</h3>
 
-                                {/* Validation Summary */}
                                 {validationResult && generationMode === 'batch' && (
                                     <div className={`rounded-xl p-4 text-left ${validationResult.validCount > 0 ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
                                         <div className="flex justify-between items-center">
@@ -1348,7 +1465,7 @@ const CardGeneration = () => {
                                                     <div className="mt-2 max-h-32 overflow-y-auto">
                                                         {validationResult.validationResults?.filter(r => !r.isValid).map((r, idx) => (
                                                             <div key={idx} className="text-xs text-amber-700 py-1 border-t border-amber-100">
-                                                                {r.student.name}: {r.missingFields?.map(f => f.fieldLabel).join(', ')}
+                                                                {r.student?.name || r.name}: {r.missingFields?.map(f => f.fieldLabel).join(', ')}
                                                             </div>
                                                         ))}
                                                     </div>
@@ -1365,7 +1482,7 @@ const CardGeneration = () => {
                                             <div>
                                                 <p className="font-medium text-slate-800">{selectedStudent.name}</p>
                                                 <p className="text-sm text-slate-500">
-                                                    {selectedStudent.student_id} • {selectedStudent.personType}
+                                                    {selectedStudent.student_id || selectedStudent.employeeDetails?.employeeId} • {selectedStudent.personType}
                                                     {selectedStudent.personType === 'student' ? ` • ${selectedStudent.studentDetails?.class || ''}` : ` • ${selectedStudent.employeeDetails?.department || ''}`}
                                                 </p>
                                             </div>
@@ -1379,7 +1496,7 @@ const CardGeneration = () => {
                                         <p className="font-medium text-slate-800">
                                             {batchMethod === 'upload' && csvFile
                                                 ? `CSV: ${csvFile.name}`
-                                                : `${filteredStudentsList.length} people from ${selectedOrg?.name}`
+                                                : `${getFilteredBatchStudents().length} people from ${selectedOrg?.name}`
                                             }
                                         </p>
                                         {personFilter !== 'all' && <p className="text-sm text-slate-500 mt-1">Filtered: {personFilter}s only</p>}
@@ -1467,18 +1584,15 @@ const CardGeneration = () => {
             {/* Batch Progress Modal */}
             <BatchProgressModal
                 isOpen={showProgressModal}
-                onClose={() => {
-                    setShowProgressModal(false);
-                    resetBatchProgress();
-                    setDownloadUrl(null);
-                }}
+                onClose={handleCloseProgressModal}
                 progress={batchProgress}
                 onDownload={handleDownload}
                 batchId={currentBatchId}
-                socketReady={socketReady}  // Add this prop
+                socketReady={socketReady}
+                isRunning={isBatchRunning}
             />
 
-            {/* Quick Create Modal - COMPLETE VERSION */}
+            {/* Quick Create Modal */}
             {showQuickCreateModal && (
                 <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto">
                     <div className="bg-white rounded-2xl p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl animate-scale-in">
@@ -1489,7 +1603,6 @@ const CardGeneration = () => {
                             </button>
                         </div>
 
-                        {/* Person Type Selector */}
                         <div className="flex gap-2 mb-4">
                             <button
                                 onClick={() => setQuickStudent(p => ({ ...p, personType: 'student' }))}
@@ -1506,7 +1619,6 @@ const CardGeneration = () => {
                         </div>
 
                         <div className="space-y-3">
-                            {/* Photo Upload Section */}
                             <div className="border-2 border-dashed border-slate-300 rounded-xl p-4 text-center hover:border-red-300 transition-colors">
                                 {quickStudent.photoPreview ? (
                                     <div className="relative inline-block">
@@ -1545,7 +1657,6 @@ const CardGeneration = () => {
                                 <p className="text-xs text-slate-400 mt-1">JPG, PNG up to 5MB</p>
                             </div>
 
-                            {/* ID Field */}
                             {quickStudent.personType === 'student' ? (
                                 <input
                                     type="text"
@@ -1561,7 +1672,6 @@ const CardGeneration = () => {
                                 </div>
                             )}
 
-                            {/* Name Field */}
                             <input
                                 type="text"
                                 placeholder="Full Name *"
@@ -1570,7 +1680,6 @@ const CardGeneration = () => {
                                 className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm focus:ring-2 focus:ring-red-500"
                             />
 
-                            {/* Student Specific Fields */}
                             {quickStudent.personType === 'student' && (
                                 <>
                                     <div className="grid grid-cols-2 gap-3">
@@ -1627,7 +1736,6 @@ const CardGeneration = () => {
                                 </>
                             )}
 
-                            {/* Employee Specific Fields */}
                             {quickStudent.personType === 'employee' && (
                                 <>
                                     <input
@@ -1729,14 +1837,12 @@ const CardGeneration = () => {
             {/* DraggableItem Component */}
             <DraggableItem id="test" displayX={0} displayY={0} label="Test" isPhotoField={false} isActive={false} />
 
-            {/* Close the main div */}
         </div>
     );
 };
 
 // ==================== SUB-COMPONENTS ====================
 
-// Step Button Component
 const StepButton = ({ step, title, icon, active, onClick }) => (
     <button onClick={onClick} className={`text-center p-2 rounded-xl transition-all duration-300 ${active ? 'bg-red-50 border-2 border-red-500 shadow-lg scale-105' : 'border-2 border-transparent hover:bg-slate-50 hover:scale-105'}`}>
         <div className={`w-8 h-8 rounded-full flex items-center justify-center mx-auto mb-1 text-sm font-bold transition-all ${active ? 'bg-gradient-to-br from-red-600 to-red-500 text-white shadow-lg' : 'bg-slate-200 text-slate-600'}`}>
@@ -1745,7 +1851,6 @@ const StepButton = ({ step, title, icon, active, onClick }) => (
         <div className={`text-xs font-semibold ${active ? 'text-red-600' : 'text-slate-600'}`}>{title}</div>
     </button>
 );
-
 
 const FileUploadCard = ({ title, accept, icon, color, onFileSelect, note }) => {
     const [file, setFile] = useState(null);
@@ -1764,8 +1869,26 @@ const FileUploadCard = ({ title, accept, icon, color, onFileSelect, note }) => {
     );
 };
 
-const DraggableItem = ({ id, displayX, displayY, label, isPhotoField, isActive }) => {
+const DraggableItem = ({ id, displayX, displayY, label, isPhotoField, isActive, field, sampleStudent, selectedStudent, generationMode, previewScale, previewPhotoWidth, previewPhotoHeight }) => {
     const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id });
+
+    const [photoUrl, setPhotoUrl] = useState(null);
+
+    useEffect(() => {
+        if (isPhotoField && field) {
+            let url = null;
+            if (generationMode === 'single' && selectedStudent) {
+                url = selectedStudent.photo_url;
+            } else if (sampleStudent) {
+                url = sampleStudent.photo_url;
+            }
+
+            if (url && typeof url === 'object') {
+                url = url.secure_url || url.url || null;
+            }
+            setPhotoUrl(url);
+        }
+    }, [isPhotoField, field, sampleStudent, selectedStudent, generationMode]);
 
     const style = {
         position: 'absolute',
@@ -1776,11 +1899,102 @@ const DraggableItem = ({ id, displayX, displayY, label, isPhotoField, isActive }
         cursor: 'grab',
     };
 
+    // For photo fields - render with styling and proper scaled dimensions
+    if (isPhotoField && field) {
+        const styling = field.styling || {};
+        const {
+            borderColor = '#005800',
+            borderWidth = 3,
+            borderRadius = 10,
+            placeholderColor = '#10B981',
+            placeholderBg = 'rgba(16, 185, 129, 0.05)',
+            showCameraIcon = true,
+            showPlaceholderText = true,
+            noBorder = false
+        } = styling;
+
+        // Use preview-scaled dimensions if provided, otherwise calculate
+        const width = previewPhotoWidth || (field.position?.width || 250) * (previewScale || 1);
+        const height = previewPhotoHeight || (field.position?.height || 250) * (previewScale || 1);
+
+        return (
+            <div
+                ref={setNodeRef}
+                style={{ ...style, width: `${width}px`, height: `${height}px` }}
+                {...listeners}
+                {...attributes}
+                className={`select-none transition-transform duration-150 ${isDragging ? 'scale-105 z-50' : 'hover:scale-102'}`}
+            >
+                <div
+                    className="relative overflow-hidden bg-white shadow-lg"
+                    style={{
+                        width: `${width}px`,
+                        height: `${height}px`,
+                        borderRadius: `${borderRadius}px`,
+                        border: !noBorder && borderWidth > 0 ? `${borderWidth}px solid ${borderColor}` : 'none',
+                        backgroundColor: placeholderBg
+                    }}
+                >
+                    {photoUrl ? (
+                        <img
+                            src={photoUrl}
+                            alt="Preview"
+                            className="w-full h-full object-cover"
+                            style={{ borderRadius: `${borderRadius}px` }}
+                        />
+                    ) : (
+                        <div className="w-full h-full flex flex-col items-center justify-center">
+                            {showCameraIcon && (
+                                <span className="text-3xl mb-1" style={{ color: placeholderColor }}>📷</span>
+                            )}
+                            {showPlaceholderText && (
+                                <span className="text-xs" style={{ color: '#666' }}>Add Photo</span>
+                            )}
+                        </div>
+                    )}
+                    <div className="absolute bottom-0 right-0 w-4 h-4 bg-white border border-gray-300 rounded cursor-se-resize opacity-0 hover:opacity-100 transition-opacity"
+                        onMouseDown={(e) => {
+                            e.stopPropagation();
+                            const startX = e.clientX;
+                            const startY = e.clientY;
+                            const startWidth = width;
+                            const startHeight = height;
+
+                            const onMouseMove = (moveEvent) => {
+                                const deltaX = moveEvent.clientX - startX;
+                                const deltaY = moveEvent.clientY - startY;
+                                const newWidth = Math.max(50, startWidth + deltaX);
+                                const newHeight = Math.max(50, startHeight + deltaY);
+
+                                if (window.updateFieldPosition) {
+                                    window.updateFieldPosition(field.name, field.position?.x || 0, field.position?.y || 0, { width: newWidth, height: newHeight });
+                                }
+                            };
+
+                            const onMouseUp = () => {
+                                document.removeEventListener('mousemove', onMouseMove);
+                                document.removeEventListener('mouseup', onMouseUp);
+                            };
+
+                            document.addEventListener('mousemove', onMouseMove);
+                            document.addEventListener('mouseup', onMouseUp);
+                        }}
+                    >
+                        <i className="pi pi-arrows-alt text-xs"></i>
+                    </div>
+                </div>
+                <div className="absolute -top-5 left-0 text-[10px] font-medium bg-black/70 text-white px-1.5 py-0.5 rounded whitespace-nowrap">
+                    {field.label}
+                </div>
+            </div>
+        );
+    }
+
+    // For text fields
     return (
         <div ref={setNodeRef} style={style} {...listeners} {...attributes} className={`select-none transition-transform duration-150 ${isDragging ? 'scale-110' : 'hover:scale-105'}`}>
             <div className={`px-3 py-1.5 rounded-xl text-xs font-bold shadow-2xl border-2 backdrop-blur-sm whitespace-nowrap max-w-[200px] truncate ${isDragging ? 'bg-gradient-to-r from-red-600 to-red-500 text-white border-red-300 shadow-red-500/50' :
-                isPhotoField ? 'bg-gradient-to-r from-purple-600 to-purple-500 text-white border-purple-400 shadow-purple-500/30' :
-                    'bg-white/95 text-slate-800 border-green-300 shadow-green-500/20'
+                'bg-white/95 text-slate-800 border-green-300 shadow-green-500/20'
                 }`}>
                 {label}
                 {isDragging && <span className="ml-2 text-[10px] opacity-80 animate-pulse">↗️</span>}

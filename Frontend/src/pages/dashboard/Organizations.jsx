@@ -1,10 +1,9 @@
-// pages/dashboard/Organizations.jsx - CARD-AGENT NAVY & CRIMSON
+// pages/dashboard/Organizations.jsx - FIXED VERSION
 import React, { useState, useEffect, useRef } from 'react';
 import { organizationAPI } from '../../services/api';
 import toast from 'react-hot-toast';
 
 const Organizations = () => {
-
 
   // ==================== STATE ====================
   const [organizations, setOrganizations] = useState([]);
@@ -51,10 +50,8 @@ const Organizations = () => {
       const response = await organizationAPI.getAll({ limit: 100 });
       if (response.success) {
         const orgs = response.organizations || [];
-        // console.log('📦 First org full data:', orgs[0]); // 🔥 ADD THIS
         setOrganizations(orgs);
 
-        // Calculate stats
         const schools = orgs.filter(o => o.type !== 'corporate').length;
         const corporate = orgs.filter(o => o.type === 'corporate').length;
         const totalPeople = orgs.reduce((sum, o) => sum + (o.stats?.total || 0), 0);
@@ -62,6 +59,7 @@ const Organizations = () => {
       }
     } catch (error) {
       console.error('Failed to load organizations:', error);
+      toast.error('Failed to load organizations');
     } finally {
       setLoading(false);
     }
@@ -89,8 +87,47 @@ const Organizations = () => {
   // ==================== FORM HANDLERS ====================
   const handleInputChange = (e) => {
     const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
+
+    // When type changes, update level accordingly
+    if (name === 'type') {
+      let newLevel = 'mixed';
+      if (value === 'corporate' || value === 'university' || value === 'other') {
+        newLevel = 'n_a';
+      } else if (value === 'primary') {
+        newLevel = 'primary';
+      } else if (value === 'tvet') {
+        newLevel = 'tvet';
+      }
+      setFormData(prev => ({ ...prev, type: value, level: newLevel }));
+    } else {
+      setFormData(prev => ({ ...prev, [name]: value }));
+    }
+
     if (formErrors[name]) setFormErrors(prev => ({ ...prev, [name]: '' }));
+  };
+
+  // Get level options based on selected organization type
+  const getLevelOptions = (type) => {
+    switch (type) {
+      case 'secondary':
+        return [
+          { value: 'mixed', label: 'Mixed (O & A Level)' },
+          { value: 'o_level', label: 'O-Level Only' },
+          { value: 'a_level', label: 'A-Level Only' }
+        ];
+      case 'primary':
+        return [{ value: 'primary', label: 'Primary' }];
+      case 'tvet':
+        return [{ value: 'tvet', label: 'TVET' }];
+      case 'university':
+        return [{ value: 'n_a', label: 'N/A' }];
+      case 'corporate':
+        return [{ value: 'n_a', label: 'N/A' }];
+      case 'other':
+        return [{ value: 'n_a', label: 'N/A' }];
+      default:
+        return [{ value: 'mixed', label: 'Mixed' }];
+    }
   };
 
   const handleLogoSelect = (e) => {
@@ -121,6 +158,14 @@ const Organizations = () => {
     else if (!/\S+@\S+\.\S+/.test(formData.email)) errors.email = 'Invalid email format';
     if (!formData.province.trim()) errors.province = 'Province is required';
     if (!formData.district.trim()) errors.district = 'District is required';
+
+    // Validate level based on type
+    if (formData.type !== 'corporate' && formData.type !== 'university' && formData.type !== 'other') {
+      if (!formData.level || formData.level === 'n_a') {
+        errors.level = 'Level is required for this organization type';
+      }
+    }
+
     setFormErrors(errors);
     return Object.keys(errors).length === 0;
   };
@@ -134,32 +179,41 @@ const Organizations = () => {
       const submitData = new FormData();
       submitData.append('name', formData.name);
       submitData.append('type', formData.type);
-      submitData.append('level', formData.type === 'corporate' ? 'n_a' : formData.level);
+
+      // Only send level for non-corporate types
+      if (formData.type !== 'corporate' && formData.type !== 'university' && formData.type !== 'other') {
+        submitData.append('level', formData.level);
+      } else {
+        submitData.append('level', 'n_a');
+      }
+
       submitData.append('phone', formData.phone);
       submitData.append('email', formData.email);
-      submitData.append('website', formData.website);
+      submitData.append('website', formData.website || '');
       submitData.append('province', formData.province);
       submitData.append('district', formData.district);
-      submitData.append('sector', formData.sector);
+      submitData.append('sector', formData.sector || '');
       submitData.append('country', formData.country);
-      if (formData.logo instanceof File) submitData.append('logo', formData.logo);
 
+      if (formData.logo instanceof File) {
+        submitData.append('logo', formData.logo);
+      }
+
+      let response;
       if (editingOrg) {
-        await organizationAPI.update(editingOrg._id, submitData);
-
-        toast.success(`${editingOrg.name} updated successfully!`, {
-          icon: '🗑️',
-          style: { borderRadius: '12px', background: '#0F172A', color: '#fff' }
-        })
+        response = await organizationAPI.update(editingOrg._id, submitData);
+        toast.success(`${editingOrg.name} updated successfully!`);
       } else {
-        await organizationAPI.create(submitData);
+        response = await organizationAPI.create(submitData);
+        toast.success(`${formData.name} created successfully!`);
       }
 
       resetForm();
       loadOrganizations();
     } catch (error) {
       console.error('Save error:', error);
-      alert('Failed to save: ' + (error.response?.data?.error || error.message));
+      const errorMsg = error.response?.data?.error || error.message || 'Failed to save organization';
+      toast.error(errorMsg);
     } finally {
       setSaving(false);
     }
@@ -171,7 +225,7 @@ const Organizations = () => {
     setFormData({
       name: org.name || '',
       type: org.type || 'secondary',
-      level: org.level || 'mixed',
+      level: org.level || (org.type === 'corporate' ? 'n_a' : 'mixed'),
       phone: org.phone || '',
       email: org.email || '',
       website: org.website || '',
@@ -190,14 +244,10 @@ const Organizations = () => {
     setDeleting(true);
 
     try {
-      // 🔥 Delete permanently (with all associated data)
       const response = await organizationAPI.delete(showDeleteConfirm._id + '?permanent=true');
 
       if (response.success) {
-        toast.success(`${showDeleteConfirm.name} deleted successfully!`, {
-          icon: '🗑️',
-          style: { borderRadius: '12px', background: '#0F172A', color: '#fff' }
-        });
+        toast.success(`${showDeleteConfirm.name} deleted successfully!`);
         setShowDeleteConfirm(null);
         loadOrganizations();
       } else {
@@ -219,6 +269,7 @@ const Organizations = () => {
       }
     } catch (error) {
       console.error('Failed to load details:', error);
+      toast.error('Failed to load organization details');
     }
   };
 
@@ -331,15 +382,24 @@ const Organizations = () => {
             <div key={org._id}
               className="bg-white rounded-2xl shadow-lg border border-slate-200/50 hover:shadow-xl hover:border-red-200 transition-all duration-300 overflow-hidden group"
             >
-              {/* Card Header */}
+              {/* Card Header with Logo Fix */}
               <div className="p-5 pb-3">
                 <div className="flex items-start justify-between mb-3">
                   <div className="flex items-center space-x-3">
-                    <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center text-2xl overflow-hidden border border-slate-200">
+                    <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center text-2xl overflow-hidden border border-slate-200 flex-shrink-0">
                       {org.logo?.url ? (
-                        <img src={org.logo?.url} alt={org.name} className="w-full h-full object-cover" />
+                        <img
+                          src={org.logo.url}
+                          alt={org.name}
+                          className="w-full h-full object-cover"
+                          onError={(e) => {
+                            e.target.onerror = null;
+                            e.target.style.display = 'none';
+                            e.target.parentElement.innerHTML = getTypeIcon(org.type);
+                          }}
+                        />
                       ) : (
-                        getTypeIcon(org.type)
+                        <span className="text-2xl">{getTypeIcon(org.type)}</span>
                       )}
                     </div>
                     <div className="min-w-0">
@@ -410,7 +470,7 @@ const Organizations = () => {
         </div>
       )}
 
-      {/* Add/Edit Modal */}
+      {/* Add/Edit Modal - FIXED VERSION */}
       {showAddModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
           <div ref={modalRef} className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden animate-scale-in">
@@ -426,12 +486,16 @@ const Organizations = () => {
 
             {/* Body */}
             <div className="overflow-y-auto max-h-[calc(90vh-140px)] p-5 space-y-5">
-              {/* Type & Level */}
+              {/* Type & Level - FIXED */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-medium text-slate-600 mb-1">Type *</label>
-                  <select name="type" value={formData.type} onChange={handleInputChange}
-                    className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm">
+                  <select
+                    name="type"
+                    value={formData.type}
+                    onChange={handleInputChange}
+                    className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm focus:ring-2 focus:ring-red-500"
+                  >
                     <option value="secondary">Secondary School</option>
                     <option value="primary">Primary School</option>
                     <option value="tvet">TVET School</option>
@@ -440,18 +504,38 @@ const Organizations = () => {
                     <option value="other">Other</option>
                   </select>
                 </div>
-                {formData.type !== 'corporate' && (
+
+                {/* Level selector - only show for types that need it */}
+                {formData.type !== 'corporate' && formData.type !== 'university' && formData.type !== 'other' && (
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1">
+                      Level <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      name="level"
+                      value={formData.level}
+                      onChange={handleInputChange}
+                      className={`w-full px-3 py-2.5 bg-slate-50 border rounded-xl text-sm focus:ring-2 focus:ring-red-500 ${formErrors.level ? 'border-red-300' : 'border-slate-300'}`}
+                    >
+                      {getLevelOptions(formData.type).map(opt => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                    {formErrors.level && <p className="mt-1 text-xs text-red-500">{formErrors.level}</p>}
+                  </div>
+                )}
+
+                {/* Show disabled level field for corporate/university/other */}
+                {(formData.type === 'corporate' || formData.type === 'university' || formData.type === 'other') && (
                   <div>
                     <label className="block text-xs font-medium text-slate-600 mb-1">Level</label>
-                    <select name="level" value={formData.level} onChange={handleInputChange}
-                      className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm">
-                      <option value="mixed">Mixed (O & A Level)</option>
-                      <option value="o_level">O-Level Only</option>
-                      <option value="a_level">A-Level Only</option>
-                      <option value="tvet">TVET</option>
-                      <option value="primary">Primary</option>
-                      <option value="n_a">N/A</option>
-                    </select>
+                    <input
+                      type="text"
+                      value="N/A"
+                      disabled
+                      className="w-full px-3 py-2.5 bg-slate-100 border border-slate-200 rounded-xl text-sm text-slate-500"
+                    />
+                    <p className="text-xs text-slate-400 mt-1">Not applicable for this type</p>
                   </div>
                 )}
               </div>
@@ -459,9 +543,14 @@ const Organizations = () => {
               {/* Name */}
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1">Organization Name *</label>
-                <input type="text" name="name" value={formData.name} onChange={handleInputChange}
+                <input
+                  type="text"
+                  name="name"
+                  value={formData.name}
+                  onChange={handleInputChange}
                   className={`w-full px-3 py-2.5 bg-slate-50 border rounded-xl text-sm ${formErrors.name ? 'border-red-300' : 'border-slate-300'} focus:ring-2 focus:ring-red-500`}
-                  placeholder="e.g., Lycée de Kigali" />
+                  placeholder="e.g., Lycée de Kigali"
+                />
                 {formErrors.name && <p className="mt-1 text-xs text-red-500">{formErrors.name}</p>}
               </div>
 
@@ -469,16 +558,26 @@ const Organizations = () => {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-medium text-slate-600 mb-1">Phone *</label>
-                  <input type="tel" name="phone" value={formData.phone} onChange={handleInputChange}
+                  <input
+                    type="tel"
+                    name="phone"
+                    value={formData.phone}
+                    onChange={handleInputChange}
                     className={`w-full px-3 py-2.5 bg-slate-50 border rounded-xl text-sm ${formErrors.phone ? 'border-red-300' : 'border-slate-300'} focus:ring-2 focus:ring-red-500`}
-                    placeholder="+250 788 123 456" />
+                    placeholder="+250 788 123 456"
+                  />
                   {formErrors.phone && <p className="mt-1 text-xs text-red-500">{formErrors.phone}</p>}
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-slate-600 mb-1">Email *</label>
-                  <input type="email" name="email" value={formData.email} onChange={handleInputChange}
+                  <input
+                    type="email"
+                    name="email"
+                    value={formData.email}
+                    onChange={handleInputChange}
                     className={`w-full px-3 py-2.5 bg-slate-50 border rounded-xl text-sm ${formErrors.email ? 'border-red-300' : 'border-slate-300'} focus:ring-2 focus:ring-red-500`}
-                    placeholder="info@school.edu" />
+                    placeholder="info@school.edu"
+                  />
                   {formErrors.email && <p className="mt-1 text-xs text-red-500">{formErrors.email}</p>}
                 </div>
               </div>
@@ -486,9 +585,14 @@ const Organizations = () => {
               {/* Website */}
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1">Website (Optional)</label>
-                <input type="url" name="website" value={formData.website} onChange={handleInputChange}
+                <input
+                  type="url"
+                  name="website"
+                  value={formData.website}
+                  onChange={handleInputChange}
                   className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm"
-                  placeholder="https://www.example.com" />
+                  placeholder="https://www.example.com"
+                />
               </div>
 
               {/* Address */}
@@ -497,29 +601,49 @@ const Organizations = () => {
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs text-slate-500 mb-1">Province *</label>
-                    <input type="text" name="province" value={formData.province} onChange={handleInputChange}
+                    <input
+                      type="text"
+                      name="province"
+                      value={formData.province}
+                      onChange={handleInputChange}
                       className={`w-full px-3 py-2 bg-slate-50 border rounded-lg text-sm ${formErrors.province ? 'border-red-300' : 'border-slate-300'}`}
-                      placeholder="Kigali City" />
+                      placeholder="Kigali City"
+                    />
                     {formErrors.province && <p className="mt-1 text-xs text-red-500">{formErrors.province}</p>}
                   </div>
                   <div>
                     <label className="block text-xs text-slate-500 mb-1">District *</label>
-                    <input type="text" name="district" value={formData.district} onChange={handleInputChange}
+                    <input
+                      type="text"
+                      name="district"
+                      value={formData.district}
+                      onChange={handleInputChange}
                       className={`w-full px-3 py-2 bg-slate-50 border rounded-lg text-sm ${formErrors.district ? 'border-red-300' : 'border-slate-300'}`}
-                      placeholder="Gasabo" />
+                      placeholder="Gasabo"
+                    />
                     {formErrors.district && <p className="mt-1 text-xs text-red-500">{formErrors.district}</p>}
                   </div>
                   <div>
                     <label className="block text-xs text-slate-500 mb-1">Sector</label>
-                    <input type="text" name="sector" value={formData.sector} onChange={handleInputChange}
+                    <input
+                      type="text"
+                      name="sector"
+                      value={formData.sector}
+                      onChange={handleInputChange}
                       className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-sm"
-                      placeholder="Kimihurura" />
+                      placeholder="Kimihurura"
+                    />
                   </div>
                   <div>
                     <label className="block text-xs text-slate-500 mb-1">Country</label>
-                    <input type="text" name="country" value={formData.country} onChange={handleInputChange}
+                    <input
+                      type="text"
+                      name="country"
+                      value={formData.country}
+                      onChange={handleInputChange}
                       className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-sm"
-                      placeholder="Rwanda" />
+                      placeholder="Rwanda"
+                    />
                   </div>
                 </div>
               </div>
@@ -536,8 +660,13 @@ const Organizations = () => {
                     )}
                   </div>
                   <div className="flex-1">
-                    <input type="file" ref={fileInputRef} accept="image/*" onChange={handleLogoSelect}
-                      className="w-full text-sm text-slate-600 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-sm file:font-medium file:bg-red-50 file:text-red-700 hover:file:bg-red-100" />
+                    <input
+                      type="file"
+                      ref={fileInputRef}
+                      accept="image/*"
+                      onChange={handleLogoSelect}
+                      className="w-full text-sm text-slate-600 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-sm file:font-medium file:bg-red-50 file:text-red-700 hover:file:bg-red-100"
+                    />
                     {formErrors.logo && <p className="mt-1 text-xs text-red-500">{formErrors.logo}</p>}
                     {formData.logoPreview && (
                       <button onClick={removeLogo} className="mt-1 text-xs text-red-500 hover:text-red-700">Remove</button>
@@ -563,7 +692,6 @@ const Organizations = () => {
         </div>
       )}
 
-
       {/* Delete Confirmation Modal */}
       {showDeleteConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
@@ -578,7 +706,6 @@ const Organizations = () => {
                 <span className="font-semibold text-slate-700">"{showDeleteConfirm.name}"</span>.
               </p>
 
-              {/* Show what will be deleted */}
               <div className="bg-red-50 border border-red-200 rounded-xl p-4 mt-4 text-left">
                 <p className="text-sm font-semibold text-red-800 mb-2">This will permanently delete:</p>
                 <ul className="text-sm text-red-700 space-y-1 list-disc list-inside">
@@ -630,8 +757,21 @@ const Organizations = () => {
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] overflow-hidden animate-scale-in" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between p-5 border-b border-slate-200">
               <div className="flex items-center space-x-3">
-                <div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center text-xl border border-slate-200">
-                  {viewingOrg.logo?.url ? <img src={viewingOrg.logo.url} className="w-full h-full object-cover rounded-xl" /> : getTypeIcon(viewingOrg.type)}
+                <div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center text-xl border border-slate-200 overflow-hidden">
+                  {viewingOrg.logo?.url ? (
+                    <img
+                      src={viewingOrg.logo.url}
+                      className="w-full h-full object-cover rounded-xl"
+                      alt={viewingOrg.name}
+                      onError={(e) => {
+                        e.target.onerror = null;
+                        e.target.style.display = 'none';
+                        e.target.parentElement.innerHTML = getTypeIcon(viewingOrg.type);
+                      }}
+                    />
+                  ) : (
+                    <span className="text-xl">{getTypeIcon(viewingOrg.type)}</span>
+                  )}
                 </div>
                 <div>
                   <h3 className="font-bold text-slate-800">{viewingOrg.name}</h3>
