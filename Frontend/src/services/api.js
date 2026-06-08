@@ -225,7 +225,11 @@ export const organizationAPI = {
   },
 
   create: async (data) => {
-    const response = await api.post('/organizations', data);
+    const response = await api.post('/organizations', data, {
+      headers: {
+        'Content-Type': 'multipart/form-data'
+      } 
+    });
     return response.data;
   },
 
@@ -235,7 +239,12 @@ export const organizationAPI = {
   },
 
   update: async (id, data) => {
-    const response = await api.put(`/organizations/${id}`, data);
+    const response = await api.put(`/organizations/${id}`, data,  {
+      headers: {
+        'Content-Type': 'multipart/form-data'
+      }
+    });
+    
     return response.data;
   },
 

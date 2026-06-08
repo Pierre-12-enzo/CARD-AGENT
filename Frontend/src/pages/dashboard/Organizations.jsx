@@ -1,8 +1,30 @@
-// pages/dashboard/Organizations.jsx - FIXED VERSION
+// pages/dashboard/Organizations.jsx - FIXED with Logo Display & Rwanda Location Selector
 import React, { useState, useEffect, useRef } from 'react';
 import { organizationAPI } from '../../services/api';
 import toast from 'react-hot-toast';
 
+// ==================== RWANDA LOCATION DATA ====================
+const RWANDA_LOCATIONS = {
+  'Kigali City': [
+    'Gasabo', 'Kicukiro', 'Nyarugenge'
+  ],
+  'Northern Province': [
+    'Burera', 'Gakenke', 'Gicumbi', 'Musanze', 'Rulindo'
+  ],
+  'Southern Province': [
+    'Gisagara', 'Huye', 'Kamonyi', 'Muhanga', 'Nyamagabe', 'Nyanza', 'Nyaruguru', 'Ruhango'
+  ],
+  'Eastern Province': [
+    'Bugesera', 'Gatsibo', 'Kayonza', 'Kirehe', 'Ngoma', 'Nyagatare', 'Rwamagana'
+  ],
+  'Western Province': [
+    'Karongi', 'Ngororero', 'Nyabihu', 'Nyamasheke', 'Rubavu', 'Rusizi', 'Rutsiro'
+  ]
+};
+
+const PROVINCES = Object.keys(RWANDA_LOCATIONS);
+
+// ==================== MAIN COMPONENT ====================
 const Organizations = () => {
 
   // ==================== STATE ====================
@@ -32,6 +54,9 @@ const Organizations = () => {
   const [formErrors, setFormErrors] = useState({});
   const [saving, setSaving] = useState(false);
 
+  // District options based on selected province
+  const [districtOptions, setDistrictOptions] = useState([]);
+
   const modalRef = useRef(null);
   const fileInputRef = useRef(null);
 
@@ -44,12 +69,35 @@ const Organizations = () => {
     filterOrganizations();
   }, [searchTerm, typeFilter, organizations]);
 
+  // Update district options when province changes
+  useEffect(() => {
+    if (formData.province && RWANDA_LOCATIONS[formData.province]) {
+      setDistrictOptions(RWANDA_LOCATIONS[formData.province]);
+      // Clear district if current selection is not valid for new province
+      if (!RWANDA_LOCATIONS[formData.province].includes(formData.district)) {
+        setFormData(prev => ({ ...prev, district: '' }));
+      }
+    } else {
+      setDistrictOptions([]);
+    }
+  }, [formData.province]);
+
   const loadOrganizations = async () => {
     setLoading(true);
     try {
       const response = await organizationAPI.getAll({ limit: 100 });
       if (response.success) {
         const orgs = response.organizations || [];
+        // 🔥 DEBUG: Log each organization's logo structure
+        orgs.forEach(org => {
+          console.log(`📋 Organization: ${org.name}`);
+          console.log(`   - logo object:`, org.logo);
+          console.log(`   - logo.url:`, org.logo?.url);
+          console.log(`   - logo.secure_url:`, org.logo?.secure_url);
+          console.log(`   - full org object:`, org);
+        });
+
+
         setOrganizations(orgs);
 
         const schools = orgs.filter(o => o.type !== 'corporate').length;
@@ -132,6 +180,8 @@ const Organizations = () => {
 
   const handleLogoSelect = (e) => {
     const file = e.target.files[0];
+    console.log('📸 Logo selected:', file ? { name: file.name, size: file.size, type: file.type } : 'No file');
+
     if (!file) return;
     if (file.size > 2 * 1024 * 1024) {
       setFormErrors(prev => ({ ...prev, logo: 'Logo must be less than 2MB' }));
@@ -139,7 +189,12 @@ const Organizations = () => {
     }
     const reader = new FileReader();
     reader.onloadend = () => {
-      setFormData(prev => ({ ...prev, logo: file, logoPreview: reader.result }));
+      setFormData(prev => ({
+        ...prev,
+        logo: file,  // Store the actual File object, not the base64
+        logoPreview: reader.result
+      }));
+      console.log('✅ Logo stored in formData:', file.name);
     };
     reader.readAsDataURL(file);
     setFormErrors(prev => ({ ...prev, logo: '' }));
@@ -195,8 +250,23 @@ const Organizations = () => {
       submitData.append('sector', formData.sector || '');
       submitData.append('country', formData.country);
 
+      // 🔥 IMPORTANT: Check if logo exists and is a File
+      console.log('📸 Logo to upload:', formData.logo);
       if (formData.logo instanceof File) {
+        console.log('✅ Appending logo file:', formData.logo.name, formData.logo.size);
         submitData.append('logo', formData.logo);
+      } else {
+        console.log('⚠️ No logo file to append. Value:', formData.logo);
+      }
+
+      // Log all FormData entries for debugging
+      console.log('📦 FormData contents:');
+      for (let pair of submitData.entries()) {
+        if (pair[0] === 'logo' && pair[1] instanceof File) {
+          console.log(`   ${pair[0]}: ${pair[1].name} (${pair[1].size} bytes)`);
+        } else {
+          console.log(`   ${pair[0]}: ${pair[1]}`);
+        }
       }
 
       let response;
@@ -280,6 +350,7 @@ const Organizations = () => {
       province: '', district: '', sector: '', country: 'Rwanda',
       logo: null, logoPreview: ''
     });
+    setDistrictOptions([]);
     setFormErrors({});
     setEditingOrg(null);
     setShowAddModal(false);
@@ -470,7 +541,7 @@ const Organizations = () => {
         </div>
       )}
 
-      {/* Add/Edit Modal - FIXED VERSION */}
+      {/* Add/Edit Modal - FIXED VERSION with Rwanda Location Selector */}
       {showAddModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
           <div ref={modalRef} className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden animate-scale-in">
@@ -486,7 +557,7 @@ const Organizations = () => {
 
             {/* Body */}
             <div className="overflow-y-auto max-h-[calc(90vh-140px)] p-5 space-y-5">
-              {/* Type & Level - FIXED */}
+              {/* Type & Level */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-medium text-slate-600 mb-1">Type *</label>
@@ -595,43 +666,50 @@ const Organizations = () => {
                 />
               </div>
 
-              {/* Address */}
+              {/* Address - Rwanda Location Selector */}
               <div>
-                <label className="block text-xs font-medium text-slate-600 mb-2">Address</label>
+                <label className="block text-xs font-medium text-slate-600 mb-2">Address (Rwanda)</label>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs text-slate-500 mb-1">Province *</label>
-                    <input
-                      type="text"
+                    <select
                       name="province"
                       value={formData.province}
                       onChange={handleInputChange}
-                      className={`w-full px-3 py-2 bg-slate-50 border rounded-lg text-sm ${formErrors.province ? 'border-red-300' : 'border-slate-300'}`}
-                      placeholder="Kigali City"
-                    />
+                      className={`w-full px-3 py-2 bg-slate-50 border rounded-lg text-sm ${formErrors.province ? 'border-red-300' : 'border-slate-300'} focus:ring-2 focus:ring-red-500`}
+                    >
+                      <option value="">Select Province</option>
+                      {PROVINCES.map(province => (
+                        <option key={province} value={province}>{province}</option>
+                      ))}
+                    </select>
                     {formErrors.province && <p className="mt-1 text-xs text-red-500">{formErrors.province}</p>}
                   </div>
                   <div>
                     <label className="block text-xs text-slate-500 mb-1">District *</label>
-                    <input
-                      type="text"
+                    <select
                       name="district"
                       value={formData.district}
                       onChange={handleInputChange}
-                      className={`w-full px-3 py-2 bg-slate-50 border rounded-lg text-sm ${formErrors.district ? 'border-red-300' : 'border-slate-300'}`}
-                      placeholder="Gasabo"
-                    />
+                      disabled={!formData.province}
+                      className={`w-full px-3 py-2 bg-slate-50 border rounded-lg text-sm ${!formData.province ? 'bg-slate-100 cursor-not-allowed' : ''} ${formErrors.district ? 'border-red-300' : 'border-slate-300'} focus:ring-2 focus:ring-red-500`}
+                    >
+                      <option value="">{formData.province ? 'Select District' : 'Select Province First'}</option>
+                      {districtOptions.map(district => (
+                        <option key={district} value={district}>{district}</option>
+                      ))}
+                    </select>
                     {formErrors.district && <p className="mt-1 text-xs text-red-500">{formErrors.district}</p>}
                   </div>
                   <div>
-                    <label className="block text-xs text-slate-500 mb-1">Sector</label>
+                    <label className="block text-xs text-slate-500 mb-1">Sector (Optional)</label>
                     <input
                       type="text"
                       name="sector"
                       value={formData.sector}
                       onChange={handleInputChange}
                       className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-sm"
-                      placeholder="Kimihurura"
+                      placeholder="e.g., Kimihurura"
                     />
                   </div>
                   <div>
@@ -639,10 +717,9 @@ const Organizations = () => {
                     <input
                       type="text"
                       name="country"
-                      value={formData.country}
-                      onChange={handleInputChange}
-                      className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-sm"
-                      placeholder="Rwanda"
+                      value="Rwanda"
+                      disabled
+                      className="w-full px-3 py-2 bg-slate-100 border border-slate-200 rounded-lg text-sm text-slate-500 cursor-not-allowed"
                     />
                   </div>
                 </div>
@@ -710,7 +787,7 @@ const Organizations = () => {
                 <p className="text-sm font-semibold text-red-800 mb-2">This will permanently delete:</p>
                 <ul className="text-sm text-red-700 space-y-1 list-disc list-inside">
                   <li>All students & employees ({showDeleteConfirm.stats?.total || 0})</li>
-                  <li>All their photos from cloud storage</li>
+                  <li>All their photos</li>
                   <li>All card generation history</li>
                   <li>All templates ({showDeleteConfirm.stats?.templates || 0})</li>
                 </ul>
@@ -790,7 +867,7 @@ const Organizations = () => {
               <DetailRow icon="pi pi-envelope" label="Email" value={viewingOrg.email} />
               {viewingOrg.website && <DetailRow icon="pi pi-globe" label="Website" value={viewingOrg.website} />}
               <DetailRow icon="pi pi-map-marker" label="Address"
-                value={`${viewingOrg.address?.sector || ''}, ${viewingOrg.address?.district || ''}, ${viewingOrg.address?.province || ''}`} />
+                value={`${viewingOrg.address?.sector ? viewingOrg.address.sector + ', ' : ''}${viewingOrg.address?.district || ''}, ${viewingOrg.address?.province || ''}`} />
 
               <div className="border-t border-slate-200 pt-3 mt-3">
                 <h4 className="font-semibold text-slate-700 mb-2">Statistics</h4>

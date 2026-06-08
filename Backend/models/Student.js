@@ -110,4 +110,10 @@ const studentSchema = new mongoose.Schema({
 studentSchema.index({ student_id: 1, schoolId: 1 }, { unique: true });
 studentSchema.index({ companyId: 1, personType: 1 });
 
+//For Handling Corporate and Universities which does not have levels
+studentSchema.virtual('displayLevel').get(function() {
+    if (this.studentDetails?.level === 'n_a') return '—';
+    return this.studentDetails?.level || 'N/A';
+});
+
 module.exports = mongoose.model('Student', studentSchema);

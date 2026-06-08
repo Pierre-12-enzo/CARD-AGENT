@@ -10,17 +10,65 @@ const authMiddleware = require('../middleware/authMiddleware');
 const roleMiddleware = require('../middleware/roleMiddleware');
 const { uploadSchoolLogo, deleteImage } = require('../utilis/cloudinaryAuth');
 const multer = require('multer');
+const path = require('path');
+
+// Configure multer with better error handling
+const storage = multer.memoryStorage();
+
+const fileFilter = (req, file, cb) => {
+    console.log('🔍 Multer file filter - Checking file:', file.originalname);
+    console.log('   Mimetype:', file.mimetype);
+
+    const allowedTypes = /jpeg|jpg|png|gif|webp/;
+    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+    const mimetype = allowedTypes.test(file.mimetype);
+
+    if (mimetype && extname) {
+        console.log('✅ File accepted');
+        return cb(null, true);
+    } else {
+        console.log('❌ File rejected - Invalid type');
+        return cb(new Error('Only image files (jpeg, jpg, png, gif, webp) are allowed!'), false);
+    }
+};
 
 const upload = multer({
-    storage: multer.memoryStorage(),
-    limits: { fileSize: 5 * 1024 * 1024 }
+    storage: storage,
+    limits: {
+        fileSize: 5 * 1024 * 1024, // 5MB limit
+        files: 1
+    },
+    fileFilter: fileFilter
 });
+
+// Add error handling middleware for multer
+const handleMulterError = (err, req, res, next) => {
+    if (err instanceof multer.MulterError) {
+        if (err.code === 'LIMIT_FILE_SIZE') {
+            return res.status(400).json({
+                success: false,
+                error: 'File too large! Maximum size is 5MB.'
+            });
+        }
+        return res.status(400).json({
+            success: false,
+            error: `Upload error: ${err.message}`
+        });
+    }
+    if (err) {
+        return res.status(400).json({
+            success: false,
+            error: err.message
+        });
+    }
+    next();
+};
 
 // Apply auth to ALL routes
 router.use(authMiddleware);
 
 // ============================================
-// CREATE ORGANIZATION
+// CREATE ORGANIZATION - WITH DEBUG LOGS
 // ============================================
 router.post('/',
     roleMiddleware(['admin', 'super_admin']),
@@ -32,6 +80,20 @@ router.post('/',
                 province, district, sector, country
             } = req.body;
 
+            console.log('=========================================');
+            console.log('📝 CREATING ORGANIZATION');
+            console.log('   Name:', name);
+            console.log('   Type:', type);
+            console.log('   Phone:', phone);
+            console.log('   Email:', email);
+            console.log('   Has file?', !!req.file);
+
+            if (req.file) {
+                console.log('   File name:', req.file.originalname);
+                console.log('   File size:', req.file.size, 'bytes');
+                console.log('   File mimetype:', req.file.mimetype);
+            }
+
             // Validate
             if (!name || !type || !phone || !email) {
                 return res.status(400).json({
@@ -40,7 +102,7 @@ router.post('/',
                 });
             }
 
-            // Check if organization name already exists in this company
+            // Check if organization name already exists
             const existing = await School.findOne({
                 name: { $regex: new RegExp(`^${name}$`, 'i') },
                 companyId: req.user.companyId
@@ -63,14 +125,32 @@ router.post('/',
             }
 
             // Upload logo if provided
-            let logoData = {};
+            let logoData = { url: '', publicId: '' };
             if (req.file) {
                 try {
+                    console.log('📸 Attempting to upload logo to Cloudinary...');
                     const base64Image = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
-                    logoData = await uploadSchoolLogo(base64Image, `org_${Date.now()}`);
+                    console.log('   Base64 length:', base64Image.length);
+
+                    const uploadResult = await uploadSchoolLogo(base64Image, `org_${Date.now()}`);
+                    console.log('   Upload result:', uploadResult);
+
+                    if (uploadResult && uploadResult.url) {
+                        logoData = {
+                            url: uploadResult.url,
+                            publicId: uploadResult.publicId
+                        };
+                        console.log('✅ Logo uploaded successfully:', logoData.url);
+                    } else {
+                        console.error('❌ Upload result missing URL:', uploadResult);
+                    }
                 } catch (uploadError) {
-                    console.error('Logo upload error:', uploadError);
+                    console.error('❌ Logo upload error:', uploadError.message);
+                    console.error('   Full error:', uploadError);
+                    // Don't fail the whole request
                 }
+            } else {
+                console.log('📸 No logo file provided');
             }
 
             // Build address
@@ -81,6 +161,8 @@ router.post('/',
                 country: country || 'Rwanda'
             };
 
+            console.log('📦 Creating organization with logo:', logoData);
+
             // Create organization
             const organization = await School.create({
                 name,
@@ -88,7 +170,7 @@ router.post('/',
                 level: level || (type === 'corporate' ? 'n_a' : 'mixed'),
                 phone,
                 email: email.toLowerCase(),
-                website,
+                website: website || '',
                 address,
                 logo: logoData,
                 companyId: req.user.companyId,
@@ -100,6 +182,10 @@ router.post('/',
                     }
                 }
             });
+
+            console.log('✅ Organization saved to database');
+            console.log('   Saved logo:', organization.logo);
+            console.log('=========================================');
 
             // Update company stats
             await Company.findByIdAndUpdate(req.user.companyId, {
@@ -116,7 +202,8 @@ router.post('/',
                 details: {
                     organizationName: organization.name,
                     type: organization.type,
-                    code: organization.code
+                    code: organization.code,
+                    hasLogo: !!logoData.url
                 },
                 ipAddress: req.ip,
                 userAgent: req.get('User-Agent')
@@ -130,12 +217,12 @@ router.post('/',
                     name: organization.name,
                     type: organization.type,
                     code: organization.code,
-                    logo: organization.logo?.url
+                    logo: organization.logo
                 }
             });
 
         } catch (error) {
-            console.error('Create organization error:', error);
+            console.error('❌ Create organization error:', error);
             if (error.name === 'ValidationError') {
                 return res.status(400).json({
                     success: false,

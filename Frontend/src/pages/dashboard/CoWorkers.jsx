@@ -1,4 +1,4 @@
-// pages/dashboard/CoWorkers.jsx - COMPLETE REFACTORED VERSION
+// pages/dashboard/CoWorkers.jsx - FIXED PERMISSIONS HANDLING
 import React, { useState, useEffect } from 'react';
 import { coWorkerAPI, organizationAPI } from '../../services/api';
 import { AnimatePresence, motion } from 'framer-motion';
@@ -19,13 +19,9 @@ const CoWorkers = () => {
   const [bulkLoading, setBulkLoading] = useState(false);
   const [bulkResults, setBulkResults] = useState(null);
 
-  // Loading states for actions
-  const [actionLoading, setActionLoading] = useState({
-    resend: null,
-    deactivate: null,
-    delete: null,
-    activate: null
-  });
+  // Per-action loading states
+  const [actionLoadingId, setActionLoadingId] = useState(null);
+  const [actionType, setActionType] = useState(null);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -65,7 +61,6 @@ const CoWorkers = () => {
 
       if (coWorkersRes.success) {
         setCoWorkers(coWorkersRes.coWorkers || []);
-        setFilteredCoWorkers(coWorkersRes.coWorkers || []);
       }
 
       if (orgsRes.success) {
@@ -89,14 +84,95 @@ const CoWorkers = () => {
         c.email?.toLowerCase().includes(term)
       );
     }
-    if (statusFilter === 'active') filtered = filtered.filter(c => c.isActive);
-    if (statusFilter === 'inactive') filtered = filtered.filter(c => !c.isActive);
+    if (statusFilter === 'active') filtered = filtered.filter(c => c.isActive === true);
+    if (statusFilter === 'inactive') filtered = filtered.filter(c => c.isActive === false);
     setFilteredCoWorkers(filtered);
     setCurrentPage(1);
   };
 
+  // Helper function to build permissions array for all organizations
+  const buildPermissionsArray = (existingPermissions = []) => {
+    // Create a map of existing permissions by organizationId
+    const permissionsMap = new Map();
+    existingPermissions.forEach(perm => {
+      permissionsMap.set(perm.organizationId, perm);
+    });
+
+    // Build permissions for ALL organizations
+    return organizations.map(org => ({
+      organizationId: org._id,
+      organizationName: org.name,
+      canViewAnalytics: permissionsMap.get(org._id)?.canViewAnalytics || false,
+      canGenerateCards: permissionsMap.get(org._id)?.canGenerateCards || false,
+      canManageStudents: permissionsMap.get(org._id)?.canManageStudents || false,
+      canManageTemplates: permissionsMap.get(org._id)?.canManageTemplates || false,
+      canUploadCSV: permissionsMap.get(org._id)?.canUploadCSV || false,
+      canUploadPhotos: permissionsMap.get(org._id)?.canUploadPhotos || false,
+      canMarkAttendance: permissionsMap.get(org._id)?.canMarkAttendance || false,
+      canViewAuditLogs: permissionsMap.get(org._id)?.canViewAuditLogs || false
+    }));
+  };
+
+  // Toggle status (Activate/Deactivate)
+  const handleToggleStatus = async (coWorker) => {
+    const newStatus = !coWorker.isActive;
+
+    setActionLoadingId(coWorker._id);
+    setActionType('toggle');
+
+    // Optimistic update
+    setCoWorkers(prev => prev.map(c =>
+      c._id === coWorker._id ? { ...c, isActive: newStatus } : c
+    ));
+
+    try {
+      const response = await coWorkerAPI.update(coWorker._id, { isActive: newStatus });
+
+      if (response.success) {
+        toast.success(newStatus ? 'Co-worker activated successfully!' : 'Co-worker deactivated successfully');
+        await loadData(); // Refresh to ensure consistency
+      } else {
+        // Revert on error
+        setCoWorkers(prev => prev.map(c =>
+          c._id === coWorker._id ? { ...c, isActive: coWorker.isActive } : c
+        ));
+        toast.error(response.error || 'Failed to update status');
+      }
+    } catch (error) {
+      setCoWorkers(prev => prev.map(c =>
+        c._id === coWorker._id ? { ...c, isActive: coWorker.isActive } : c
+      ));
+      console.error('Status update error:', error);
+      toast.error(error.response?.data?.error || error.message || 'Failed to update status');
+    } finally {
+      setActionLoadingId(null);
+      setActionType(null);
+    }
+  };
+
+  // Resend invite
+  const handleResendInvite = async (id) => {
+    setActionLoadingId(id);
+    setActionType('resend');
+
+    try {
+      const response = await coWorkerAPI.resendInvite(id);
+
+      if (response.success) {
+        toast.success('Invitation resent successfully!');
+      } else {
+        toast.error(response.error || 'Failed to resend invitation');
+      }
+    } catch (error) {
+      console.error('Resend error:', error);
+      toast.error(error.response?.data?.error || error.message || 'Failed to resend');
+    } finally {
+      setActionLoadingId(null);
+      setActionType(null);
+    }
+  };
+
   const handleEdit = (coWorker) => {
-    // Only allow editing if user is active
     if (!coWorker.isActive) {
       toast.error('Cannot edit inactive co-worker. Please activate first.');
       return;
@@ -108,7 +184,7 @@ const CoWorkers = () => {
       lastName: coWorker.lastName || '',
       email: coWorker.email || '',
       phoneNumber: coWorker.phoneNumber || '',
-      permissions: coWorker.permissions || []
+      permissions: buildPermissionsArray(coWorker.permissions || [])
     });
     setShowModal(true);
   };
@@ -117,18 +193,7 @@ const CoWorkers = () => {
     setSelectedCoWorker(null);
     setFormData({
       firstName: '', lastName: '', email: '', phoneNumber: '',
-      permissions: organizations.map(org => ({
-        organizationId: org._id,
-        organizationName: org.name,
-        canViewAnalytics: false,
-        canGenerateCards: false,
-        canManageStudents: false,
-        canManageTemplates: false,
-        canUploadCSV: false,
-        canUploadPhotos: false,
-        canMarkAttendance: false,
-        canViewAuditLogs: false
-      }))
+      permissions: buildPermissionsArray([])
     });
     setShowModal(true);
   };
@@ -158,23 +223,30 @@ const CoWorkers = () => {
         lastName: formData.lastName,
         email: formData.email,
         phoneNumber: formData.phoneNumber,
+        // Only send permissions that have at least one permission enabled
         permissions: formData.permissions.filter(p =>
           p.canGenerateCards || p.canManageStudents || p.canManageTemplates ||
-          p.canUploadCSV || p.canUploadPhotos || p.canViewAnalytics || p.canViewAuditLogs
+          p.canUploadCSV || p.canUploadPhotos || p.canViewAnalytics ||
+          p.canViewAuditLogs || p.canMarkAttendance
         )
       };
 
       let response;
       if (selectedCoWorker) {
         response = await coWorkerAPI.update(selectedCoWorker._id, data);
+        if (response.success) {
+          toast.success('Co-worker updated successfully!');
+        }
       } else {
         response = await coWorkerAPI.create(data);
+        if (response.success) {
+          toast.success('Co-worker created! Invitation email sent.');
+        }
       }
 
       if (response.success) {
-        toast.success(selectedCoWorker ? 'Co-worker updated successfully!' : 'Co-worker created! Invitation email sent.');
         setShowModal(false);
-        loadData();
+        await loadData(); // Refresh to get updated permissions
       } else {
         toast.error(response.error || 'Failed to save co-worker');
       }
@@ -186,53 +258,27 @@ const CoWorkers = () => {
     }
   };
 
-  // Handle Activate/Deactivate Toggle
-  const handleToggleStatus = async (coWorker) => {
-    const newStatus = !coWorker.isActive;
-    const action = newStatus ? 'activate' : 'deactivate';
-
-    setActionLoading(prev => ({ ...prev, [action]: coWorker._id }));
-
-    try {
-      const response = await coWorkerAPI.update(coWorker._id, { isActive: newStatus });
-
-      if (response.success) {
-        toast.success(newStatus ? 'Co-worker activated successfully!' : 'Co-worker deactivated successfully');
-
-        if (!newStatus) {
-          // Send deactivation email
-          toast.info('Deactivation email sent to co-worker');
-        } else {
-          // Send activation email
-          toast.info('Activation email sent to co-worker');
-        }
-
-        loadData();
-      } else {
-        toast.error(response.error || 'Failed to update status');
-      }
-    } catch (error) {
-      console.error('Status update error:', error);
-      toast.error(error.response?.data?.error || error.message || 'Failed to update status');
-    } finally {
-      setActionLoading(prev => ({ ...prev, [action]: null }));
-    }
-  };
-
   const handleDelete = async (permanent = false) => {
     if (!selectedCoWorker) return;
 
-    const action = permanent ? 'delete' : 'deactivate';
-    setActionLoading(prev => ({ ...prev, [action]: selectedCoWorker._id }));
+    setActionLoadingId(selectedCoWorker._id);
+    setActionType('delete');
 
     try {
       const response = await coWorkerAPI.delete(selectedCoWorker._id, permanent);
 
       if (response.success) {
-        toast.success(permanent ? 'Co-worker permanently deleted' : 'Co-worker deactivated successfully');
+        if (permanent) {
+          setCoWorkers(prev => prev.filter(c => c._id !== selectedCoWorker._id));
+          toast.success('Co-worker permanently deleted');
+        } else {
+          setCoWorkers(prev => prev.map(c =>
+            c._id === selectedCoWorker._id ? { ...c, isActive: false } : c
+          ));
+          toast.success('Co-worker deactivated successfully');
+        }
         setShowDeleteModal(false);
         setSelectedCoWorker(null);
-        loadData();
       } else {
         toast.error(response.error || 'Failed to delete');
       }
@@ -240,26 +286,8 @@ const CoWorkers = () => {
       console.error('Delete error:', error);
       toast.error(error.response?.data?.error || error.message || 'Failed to delete');
     } finally {
-      setActionLoading(prev => ({ ...prev, [action]: null }));
-    }
-  };
-
-  const handleResendInvite = async (id) => {
-    setActionLoading(prev => ({ ...prev, resend: id }));
-
-    try {
-      const response = await coWorkerAPI.resendInvite(id);
-
-      if (response.success) {
-        toast.success('Invitation resent successfully!');
-      } else {
-        toast.error(response.error || 'Failed to resend invitation');
-      }
-    } catch (error) {
-      console.error('Resend error:', error);
-      toast.error(error.response?.data?.error || error.message || 'Failed to resend');
-    } finally {
-      setActionLoading(prev => ({ ...prev, resend: null }));
+      setActionLoadingId(null);
+      setActionType(null);
     }
   };
 
@@ -352,7 +380,7 @@ const CoWorkers = () => {
 
       if (response.results?.success?.length > 0) {
         toast.success(`${response.results.success.length} co-workers imported successfully!`);
-        loadData();
+        await loadData();
       }
       if (response.results?.failed?.length > 0) {
         toast.error(`${response.results.failed.length} co-workers failed to import`);
@@ -375,8 +403,8 @@ const CoWorkers = () => {
   const totalPages = Math.ceil(filteredCoWorkers.length / itemsPerPage) || 1;
   const paginatedCoWorkers = filteredCoWorkers.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
-  const activeCount = coWorkers.filter(c => c.isActive).length;
-  const pendingCount = coWorkers.filter(c => !c.lastLogin && c.isActive).length;
+  const activeCount = coWorkers.filter(c => c.isActive === true).length;
+  const pendingCount = coWorkers.filter(c => !c.lastLogin && c.isActive === true).length;
 
   if (loading) {
     return (
@@ -446,7 +474,7 @@ const CoWorkers = () => {
         </div>
       </div>
 
-      {/* Co-Workers Grid/Cards - Responsive */}
+      {/* Co-Workers Grid/Cards */}
       {filteredCoWorkers.length > 0 ? (
         <>
           {/* Desktop Table View */}
@@ -482,8 +510,8 @@ const CoWorkers = () => {
                         {coWorker.permissions?.length > 2 && ` +${coWorker.permissions.length - 2}`}
                       </td>
                       <td className="py-3 px-4">
-                        <span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${coWorker.isActive ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                          {coWorker.isActive ? 'Active' : 'Inactive'}
+                        <span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${coWorker.isActive === true ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                          {coWorker.isActive === true ? 'Active' : 'Inactive'}
                         </span>
                       </td>
                       <td className="py-3 px-4 text-sm text-slate-500">
@@ -491,25 +519,23 @@ const CoWorkers = () => {
                       </td>
                       <td className="py-3 px-4">
                         <div className="flex items-center justify-center space-x-2">
-                          {/* Activate/Deactivate Toggle Button */}
                           <button
                             onClick={() => handleToggleStatus(coWorker)}
-                            disabled={actionLoading.activate === coWorker._id || actionLoading.deactivate === coWorker._id}
-                            className={`p-2 rounded-lg transition-colors ${coWorker.isActive
+                            disabled={actionLoadingId === coWorker._id && actionType === 'toggle'}
+                            className={`p-2 rounded-lg transition-colors ${coWorker.isActive === true
                               ? 'bg-red-50 text-red-600 hover:bg-red-100'
                               : 'bg-green-50 text-green-600 hover:bg-green-100'
                               } disabled:opacity-50`}
-                            title={coWorker.isActive ? 'Deactivate' : 'Activate'}
+                            title={coWorker.isActive === true ? 'Deactivate' : 'Activate'}
                           >
-                            {actionLoading.activate === coWorker._id || actionLoading.deactivate === coWorker._id ? (
+                            {actionLoadingId === coWorker._id && actionType === 'toggle' ? (
                               <i className="pi pi-spinner pi-spin text-sm"></i>
                             ) : (
-                              <i className={`pi ${coWorker.isActive ? 'pi-ban' : 'pi-check-circle'} text-sm`}></i>
+                              <i className={`pi ${coWorker.isActive === true ? 'pi-ban' : 'pi-check-circle'} text-sm`}></i>
                             )}
                           </button>
 
-                          {/* Edit Button - Only for active users */}
-                          {coWorker.isActive && (
+                          {coWorker.isActive === true && (
                             <button
                               onClick={() => handleEdit(coWorker)}
                               className="p-2 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
@@ -519,15 +545,14 @@ const CoWorkers = () => {
                             </button>
                           )}
 
-                          {/* Resend Invite - Only for active users who never logged in */}
-                          {coWorker.isActive && !coWorker.lastLogin && (
+                          {coWorker.isActive === true && !coWorker.lastLogin && (
                             <button
                               onClick={() => handleResendInvite(coWorker._id)}
-                              disabled={actionLoading.resend === coWorker._id}
+                              disabled={actionLoadingId === coWorker._id && actionType === 'resend'}
                               className="p-2 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
                               title="Resend Invite"
                             >
-                              {actionLoading.resend === coWorker._id ? (
+                              {actionLoadingId === coWorker._id && actionType === 'resend' ? (
                                 <i className="pi pi-spinner pi-spin text-sm"></i>
                               ) : (
                                 <i className="pi pi-envelope text-sm"></i>
@@ -535,7 +560,6 @@ const CoWorkers = () => {
                             </button>
                           )}
 
-                          {/* Delete Button */}
                           <button
                             onClick={() => { setSelectedCoWorker(coWorker); setShowDeleteModal(true); }}
                             className="p-2 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
@@ -568,8 +592,8 @@ const CoWorkers = () => {
                       <p className="text-xs text-slate-500">{coWorker.email}</p>
                     </div>
                   </div>
-                  <span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${coWorker.isActive ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                    {coWorker.isActive ? 'Active' : 'Inactive'}
+                  <span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${coWorker.isActive === true ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                    {coWorker.isActive === true ? 'Active' : 'Inactive'}
                   </span>
                 </div>
 
@@ -592,25 +616,23 @@ const CoWorkers = () => {
                 </div>
 
                 <div className="flex gap-2 pt-3 border-t border-slate-100">
-                  {/* Activate/Deactivate Button */}
                   <button
                     onClick={() => handleToggleStatus(coWorker)}
-                    disabled={actionLoading.activate === coWorker._id || actionLoading.deactivate === coWorker._id}
-                    className={`flex-1 py-2 rounded-lg text-xs font-medium transition-colors flex items-center justify-center space-x-1 ${coWorker.isActive
+                    disabled={actionLoadingId === coWorker._id && actionType === 'toggle'}
+                    className={`flex-1 py-2 rounded-lg text-xs font-medium transition-colors flex items-center justify-center space-x-1 ${coWorker.isActive === true
                       ? 'bg-red-50 text-red-600 hover:bg-red-100'
                       : 'bg-green-50 text-green-600 hover:bg-green-100'
                       } disabled:opacity-50`}
                   >
-                    {actionLoading.activate === coWorker._id || actionLoading.deactivate === coWorker._id ? (
+                    {actionLoadingId === coWorker._id && actionType === 'toggle' ? (
                       <i className="pi pi-spinner pi-spin text-xs"></i>
                     ) : (
-                      <i className={`pi ${coWorker.isActive ? 'pi-ban' : 'pi-check-circle'} text-xs`}></i>
+                      <i className={`pi ${coWorker.isActive === true ? 'pi-ban' : 'pi-check-circle'} text-xs`}></i>
                     )}
-                    <span>{coWorker.isActive ? 'Deactivate' : 'Activate'}</span>
+                    <span>{coWorker.isActive === true ? 'Deactivate' : 'Activate'}</span>
                   </button>
 
-                  {/* Edit Button - Only for active users */}
-                  {coWorker.isActive && (
+                  {coWorker.isActive === true && (
                     <button
                       onClick={() => handleEdit(coWorker)}
                       className="flex-1 py-2 bg-slate-100 text-slate-700 rounded-lg text-xs font-medium hover:bg-red-50 hover:text-red-600 transition-colors flex items-center justify-center space-x-1"
@@ -620,14 +642,13 @@ const CoWorkers = () => {
                     </button>
                   )}
 
-                  {/* Resend Invite - Only for active users who never logged in */}
-                  {coWorker.isActive && !coWorker.lastLogin && (
+                  {coWorker.isActive === true && !coWorker.lastLogin && (
                     <button
                       onClick={() => handleResendInvite(coWorker._id)}
-                      disabled={actionLoading.resend === coWorker._id}
+                      disabled={actionLoadingId === coWorker._id && actionType === 'resend'}
                       className="flex-1 py-2 bg-slate-100 text-slate-700 rounded-lg text-xs font-medium hover:bg-red-50 hover:text-red-600 transition-colors disabled:opacity-50 flex items-center justify-center space-x-1"
                     >
-                      {actionLoading.resend === coWorker._id ? (
+                      {actionLoadingId === coWorker._id && actionType === 'resend' ? (
                         <i className="pi pi-spinner pi-spin text-xs"></i>
                       ) : (
                         <i className="pi pi-envelope text-xs"></i>
@@ -636,7 +657,6 @@ const CoWorkers = () => {
                     </button>
                   )}
 
-                  {/* Delete Button */}
                   <button
                     onClick={() => { setSelectedCoWorker(coWorker); setShowDeleteModal(true); }}
                     className="py-2 px-3 bg-slate-100 text-slate-600 rounded-lg text-xs font-medium hover:bg-red-50 hover:text-red-600 transition-colors"
@@ -737,47 +757,47 @@ const CoWorkers = () => {
                       </p>
                     ) : (
                       <div className="space-y-3">
-                        {organizations.map(org => {
-                          const orgPerms = formData.permissions.find(p => p.organizationId === org._id) || {};
-                          const activeCount = Object.values(orgPerms).filter(v => v === true).length;
-                          return (
-                            <details key={org._id} className="bg-slate-50 rounded-xl border border-slate-200 group">
-                              <summary className="flex items-center justify-between p-3 cursor-pointer hover:bg-slate-100 rounded-xl">
-                                <div className="flex items-center space-x-2">
-                                  <i className="pi pi-chevron-right text-xs text-slate-400 transition-transform group-open:rotate-90"></i>
-                                  <span className="text-sm font-medium text-slate-700">{org.name}</span>
-                                  <span className="text-xs text-slate-400 capitalize">({org.type})</span>
-                                </div>
-                                {activeCount > 0 && (
-                                  <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full">{activeCount} permissions</span>
-                                )}
-                              </summary>
-                              <div className="p-3 grid grid-cols-2 gap-2 border-t border-slate-200">
-                                {[
-                                  { key: 'canManageStudents', label: 'Students', icon: 'pi pi-users' },
-                                  { key: 'canGenerateCards', label: 'Generate Cards', icon: 'pi pi-qrcode' },
-                                  { key: 'canManageTemplates', label: 'Templates', icon: 'pi pi-image' },
-                                  { key: 'canUploadPhotos', label: 'Upload Photos', icon: 'pi pi-camera' },
-                                  { key: 'canUploadCSV', label: 'Import CSV', icon: 'pi pi-file-excel' },
-                                  { key: 'canViewAnalytics', label: 'Analytics', icon: 'pi pi-chart-line' },
-                                  { key: 'canViewAuditLogs', label: 'Audit Logs', icon: 'pi pi-history' },
-                                  { key: 'canMarkAttendance', label: 'Attendance', icon: 'pi pi-calendar' },
-                                ].map(perm => (
-                                  <label key={perm.key}
-                                    className={`flex items-center space-x-2 p-2 rounded-lg cursor-pointer transition-colors ${orgPerms[perm.key] ? 'bg-red-50 border border-red-200' : 'hover:bg-white'}`}>
-                                    <input type="checkbox" checked={orgPerms[perm.key] || false}
-                                      onChange={() => handlePermissionChange(org._id, perm.key)}
-                                      className="w-4 h-4 text-red-600 rounded focus:ring-red-500" />
-                                    <i className={`${perm.icon} text-xs ${orgPerms[perm.key] ? 'text-red-600' : 'text-slate-400'}`}></i>
-                                    <span className={`text-xs ${orgPerms[perm.key] ? 'text-red-700 font-medium' : 'text-slate-600'}`}>
-                                      {perm.label}
-                                    </span>
-                                  </label>
-                                ))}
+                        {formData.permissions.map(orgPerm => (
+                          <details key={orgPerm.organizationId} className="bg-slate-50 rounded-xl border border-slate-200 group">
+                            <summary className="flex items-center justify-between p-3 cursor-pointer hover:bg-slate-100 rounded-xl">
+                              <div className="flex items-center space-x-2">
+                                <i className="pi pi-chevron-right text-xs text-slate-400 transition-transform group-open:rotate-90"></i>
+                                <span className="text-sm font-medium text-slate-700">{orgPerm.organizationName}</span>
                               </div>
-                            </details>
-                          );
-                        })}
+                              {Object.values(orgPerm).filter(v => v === true).length > 0 && (
+                                <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full">
+                                  {Object.values(orgPerm).filter(v => v === true).length} permissions
+                                </span>
+                              )}
+                            </summary>
+                            <div className="p-3 grid grid-cols-2 gap-2 border-t border-slate-200">
+                              {[
+                                { key: 'canManageStudents', label: 'Manage Students', icon: 'pi pi-users' },
+                                { key: 'canGenerateCards', label: 'Generate Cards', icon: 'pi pi-qrcode' },
+                                { key: 'canManageTemplates', label: 'Manage Templates', icon: 'pi pi-image' },
+                                { key: 'canUploadPhotos', label: 'Upload Photos', icon: 'pi pi-camera' },
+                                { key: 'canUploadCSV', label: 'Import CSV', icon: 'pi pi-file-excel' },
+                                { key: 'canViewAnalytics', label: 'View Analytics', icon: 'pi pi-chart-line' },
+                                { key: 'canViewAuditLogs', label: 'Audit Logs', icon: 'pi pi-history' },
+                                { key: 'canMarkAttendance', label: 'Mark Attendance', icon: 'pi pi-calendar' },
+                              ].map(perm => (
+                                <label key={perm.key}
+                                  className={`flex items-center space-x-2 p-2 rounded-lg cursor-pointer transition-colors ${orgPerm[perm.key] ? 'bg-red-50 border border-red-200' : 'hover:bg-white'}`}>
+                                  <input
+                                    type="checkbox"
+                                    checked={orgPerm[perm.key] || false}
+                                    onChange={() => handlePermissionChange(orgPerm.organizationId, perm.key)}
+                                    className="w-4 h-4 text-red-600 rounded focus:ring-red-500"
+                                  />
+                                  <i className={`${perm.icon} text-xs ${orgPerm[perm.key] ? 'text-red-600' : 'text-slate-400'}`}></i>
+                                  <span className={`text-xs ${orgPerm[perm.key] ? 'text-red-700 font-medium' : 'text-slate-600'}`}>
+                                    {perm.label}
+                                  </span>
+                                </label>
+                              ))}
+                            </div>
+                          </details>
+                        ))}
                       </div>
                     )}
                   </div>
@@ -821,11 +841,11 @@ const CoWorkers = () => {
               </div>
               <div className="space-y-3 mt-6">
                 <button onClick={() => handleDelete(false)}
-                  disabled={actionLoading.deactivate === selectedCoWorker._id}
+                  disabled={actionLoadingId === selectedCoWorker._id && actionType === 'delete'}
                   className="w-full text-left p-4 border border-amber-200 rounded-xl hover:bg-amber-50 transition-colors disabled:opacity-50">
                   <div className="flex items-center space-x-3">
                     <div className="w-9 h-9 bg-amber-100 rounded-full flex items-center justify-center">
-                      {actionLoading.deactivate === selectedCoWorker._id ? (
+                      {actionLoadingId === selectedCoWorker._id && actionType === 'delete' ? (
                         <i className="pi pi-spinner pi-spin text-amber-600"></i>
                       ) : (
                         <i className="pi pi-ban text-amber-600"></i>
@@ -838,11 +858,11 @@ const CoWorkers = () => {
                   </div>
                 </button>
                 <button onClick={() => handleDelete(true)}
-                  disabled={actionLoading.delete === selectedCoWorker._id}
+                  disabled={actionLoadingId === selectedCoWorker._id && actionType === 'delete'}
                   className="w-full text-left p-4 border border-red-200 rounded-xl hover:bg-red-50 transition-colors disabled:opacity-50">
                   <div className="flex items-center space-x-3">
                     <div className="w-9 h-9 bg-red-100 rounded-full flex items-center justify-center">
-                      {actionLoading.delete === selectedCoWorker._id ? (
+                      {actionLoadingId === selectedCoWorker._id && actionType === 'delete' ? (
                         <i className="pi pi-spinner pi-spin text-red-600"></i>
                       ) : (
                         <i className="pi pi-trash text-red-600"></i>
