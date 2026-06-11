@@ -1,4 +1,4 @@
-// routes/templates.js
+// routes/templates.js - FIXED for co-worker permissions
 const express = require('express');
 const path = require('path');
 const router = express.Router();
@@ -30,35 +30,83 @@ const upload = multer({
   }
 });
 
-// GET all templates - can filter by organization
+// ============================================
+// GET ALL TEMPLATES - FIXED for co-workers
+// ============================================
 router.get('/', async (req, res) => {
   try {
     const { organizationId } = req.query;
+
+    console.log('🔍 Templates request - User:', req.user.email, 'Role:', req.user.role);
+    console.log('🔍 User permissions:', JSON.stringify(req.user.permissions, null, 2));
+
     const query = { companyId: req.user.companyId };
 
-    if (organizationId) {
-      query.schoolId = organizationId;
-    }
-
-    // Co-worker: only show templates for orgs they have permission for
-    if (req.user.role === 'co_worker') {
-      const allowedOrgIds = req.user.permissions
-        .filter(p => p.canManageTemplates || p.canGenerateCards)
-        .map(p => p.organizationId);
-      query.schoolId = { $in: allowedOrgIds };
+    // SUPER ADMIN
+    if (req.user.role === 'super_admin') {
       if (organizationId) {
-        if (!allowedOrgIds.includes(organizationId)) {
-          return res.status(403).json({ success: false, error: 'Access denied' });
-        }
         query.schoolId = organizationId;
       }
     }
+    // ADMIN
+    else if (req.user.role === 'admin') {
+      if (organizationId) {
+        query.schoolId = organizationId;
+      }
+    }
+    // CO_WORKER - FIXED
+    else if (req.user.role === 'co_worker') {
+      // Check if permissions exist and is an array
+      if (!req.user.permissions || !Array.isArray(req.user.permissions) || req.user.permissions.length === 0) {
+        console.log('⚠️ Co-worker has no permissions assigned');
+        return res.json({
+          success: true,
+          templates: [],
+          message: 'No permissions assigned'
+        });
+      }
+
+      // Get organization IDs where co-worker has template or card generation permissions
+      const allowedOrgIds = req.user.permissions
+        .filter(p => p.canManageTemplates === true || p.canGenerateCards === true)
+        .map(p => p.organizationId ? p.organizationId.toString() : null)
+        .filter(id => id !== null);
+
+      console.log('🔍 Co-worker allowed orgs for templates:', allowedOrgIds);
+
+      if (allowedOrgIds.length === 0) {
+        console.log('⚠️ Co-worker has no template or card generation permissions');
+        return res.json({
+          success: true,
+          templates: [],
+          message: 'No template permissions assigned'
+        });
+      }
+
+      // If specific organization requested, check permission
+      if (organizationId) {
+        if (!allowedOrgIds.includes(organizationId)) {
+          return res.status(403).json({
+            success: false,
+            error: 'You do not have permission to view templates for this organization'
+          });
+        }
+        query.schoolId = organizationId;
+      } else {
+        // Show templates from all allowed organizations
+        query.schoolId = { $in: allowedOrgIds };
+      }
+    }
+
+    console.log('🔍 Final query:', JSON.stringify(query, null, 2));
 
     const templates = await Template.find(query)
       .populate('schoolId', 'name type')
       .sort({ isDefault: -1, createdAt: -1 });
 
-    // Update the mapping in GET / endpoint to include fields
+    console.log(`✅ Found ${templates.length} templates for user ${req.user.email}`);
+
+    // Map templates with URLs
     const templatesWithUrls = templates.map(template => {
       const templateObj = template.toObject();
       return {
@@ -72,7 +120,6 @@ router.get('/', async (req, res) => {
             width: 400, height: 300, crop: 'fill', quality: 'auto'
           }) : null,
         templateType: templateObj.templateType || (templateObj.backSide ? 'two-sided' : 'single-sided'),
-        // ✅ ADD THIS LINE to include fields in list response
         fields: templateObj.fields || [],
         originalWidth: templateObj.originalWidth,
         originalHeight: templateObj.originalHeight
@@ -82,7 +129,67 @@ router.get('/', async (req, res) => {
     res.json({ success: true, templates: templatesWithUrls });
 
   } catch (error) {
-    console.error('Error fetching templates:', error);
+    console.error('❌ Error fetching templates:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ============================================
+// GET SINGLE TEMPLATE - FIXED for co-workers
+// ============================================
+router.get('/:id', async (req, res) => {
+  try {
+    const template = await Template.findOne({
+      _id: req.params.id,
+      companyId: req.user.companyId
+    }).populate('schoolId', 'name type');
+
+    if (!template) {
+      return res.status(404).json({ success: false, error: 'Template not found' });
+    }
+
+    // Co-worker permission check - FIXED
+    if (req.user.role === 'co_worker') {
+      // Check if permissions exist
+      if (!req.user.permissions || !Array.isArray(req.user.permissions)) {
+        return res.status(403).json({ success: false, error: 'Access denied - No permissions assigned' });
+      }
+
+      const orgPerm = req.user.permissions.find(
+        p => p.organizationId && p.organizationId.toString() === template.schoolId._id.toString()
+      );
+
+      if (!orgPerm || (!orgPerm.canManageTemplates && !orgPerm.canGenerateCards)) {
+        return res.status(403).json({
+          success: false,
+          error: 'You do not have permission to view this template'
+        });
+      }
+    }
+
+    const templateObj = template.toObject();
+    const response = {
+      success: true,
+      template: {
+        ...templateObj,
+        frontSideUrl: templateObj.frontSide?.public_id ?
+          cloudinary.url(templateObj.frontSide.public_id, {
+            width: 400, height: 300, crop: 'fill', quality: 'auto'
+          }) : null,
+        backSideUrl: templateObj.backSide?.public_id ?
+          cloudinary.url(templateObj.backSide.public_id, {
+            width: 400, height: 300, crop: 'fill', quality: 'auto'
+          }) : null,
+        fields: templateObj.fields || [],
+        originalWidth: templateObj.originalWidth || templateObj.frontSide?.width,
+        originalHeight: templateObj.originalHeight || templateObj.frontSide?.height
+      }
+    };
+
+    res.json(response);
+
+  } catch (error) {
+    console.error('❌ Error fetching template:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -119,7 +226,7 @@ const getDefaultFields = (templateType = 'student') => {
         name: "photo",
         label: "Photo",
         type: "photo",
-        requirement: "required",  // ✅ CHANGED from "optional" to "required"
+        requirement: "required",
         position: { x: 50, y: 230, width: 250, height: 250 },
         styling: photoStyling
       },
@@ -143,7 +250,7 @@ const getDefaultFields = (templateType = 'student') => {
         name: "class",
         label: "Class",
         type: "text",
-        requirement: "required",  // ✅ CHANGED from "optional" to "required"
+        requirement: "required",
         position: { x: 580, y: 270, maxWidth: 300, fontSize: 20, isBold: false, textAlign: "left" },
         dataSource: { sourceType: "student_field", fieldPath: "studentDetails.class" }
       },
@@ -151,7 +258,7 @@ const getDefaultFields = (templateType = 'student') => {
         name: "level",
         label: "Level",
         type: "text",
-        requirement: "required",  // ✅ CHANGED from "optional" to "required"
+        requirement: "required",
         position: { x: 580, y: 320, maxWidth: 500, fontSize: 20, isBold: false, textAlign: "left" },
         dataSource: { sourceType: "student_field", fieldPath: "studentDetails.level" }
       },
@@ -159,7 +266,7 @@ const getDefaultFields = (templateType = 'student') => {
         name: "gender",
         label: "Gender",
         type: "text",
-        requirement: "required",  // ✅ CHANGED from "optional" to "required"
+        requirement: "required",
         position: { x: 580, y: 375, maxWidth: 300, fontSize: 18, isBold: false, textAlign: "left" },
         dataSource: { sourceType: "student_field", fieldPath: "gender" }
       },
@@ -167,7 +274,7 @@ const getDefaultFields = (templateType = 'student') => {
         name: "residence",
         label: "Residence",
         type: "text",
-        requirement: "required",  // ✅ CHANGED from "optional" to "required"
+        requirement: "required",
         position: { x: 620, y: 420, maxWidth: 300, fontSize: 18, isBold: false, textAlign: "left" },
         dataSource: { sourceType: "student_field", fieldPath: "residence" }
       },
@@ -175,7 +282,7 @@ const getDefaultFields = (templateType = 'student') => {
         name: "academic_year",
         label: "Academic Year",
         type: "text",
-        requirement: "required",  // ✅ CHANGED from "optional" to "required"
+        requirement: "required",
         position: { x: 670, y: 472, maxWidth: 300, fontSize: 18, isBold: false, textAlign: "left" },
         dataSource: { sourceType: "student_field", fieldPath: "studentDetails.academic_year" }
       }
@@ -187,7 +294,7 @@ const getDefaultFields = (templateType = 'student') => {
         name: "photo",
         label: "Photo",
         type: "photo",
-        requirement: "required",  // ✅ CHANGED from "optional" to "required"
+        requirement: "required",
         position: { x: 50, y: 230, width: 250, height: 250 },
         styling: photoStyling
       },
@@ -211,7 +318,7 @@ const getDefaultFields = (templateType = 'student') => {
         name: "department",
         label: "Department",
         type: "text",
-        requirement: "required",  // ✅ CHANGED from "optional" to "required"
+        requirement: "required",
         position: { x: 580, y: 270, maxWidth: 400, fontSize: 20, isBold: false, textAlign: "left" },
         dataSource: { sourceType: "employee_field", fieldPath: "employeeDetails.department" }
       },
@@ -219,7 +326,7 @@ const getDefaultFields = (templateType = 'student') => {
         name: "position",
         label: "Position",
         type: "text",
-        requirement: "required",  // ✅ CHANGED from "optional" to "required"
+        requirement: "required",
         position: { x: 580, y: 320, maxWidth: 400, fontSize: 20, isBold: false, textAlign: "left" },
         dataSource: { sourceType: "employee_field", fieldPath: "employeeDetails.position" }
       },
@@ -227,7 +334,7 @@ const getDefaultFields = (templateType = 'student') => {
         name: "gender",
         label: "Gender",
         type: "text",
-        requirement: "required",  // ✅ CHANGED from "optional" to "required"
+        requirement: "required",
         position: { x: 580, y: 375, maxWidth: 300, fontSize: 18, isBold: false, textAlign: "left" },
         dataSource: { sourceType: "employee_field", fieldPath: "gender" }
       },
@@ -235,7 +342,7 @@ const getDefaultFields = (templateType = 'student') => {
         name: "residence",
         label: "Residence",
         type: "text",
-        requirement: "required",  // ✅ CHANGED from "optional" to "required"
+        requirement: "required",
         position: { x: 620, y: 420, maxWidth: 300, fontSize: 18, isBold: false, textAlign: "left" },
         dataSource: { sourceType: "employee_field", fieldPath: "residence" }
       },
@@ -243,7 +350,7 @@ const getDefaultFields = (templateType = 'student') => {
         name: "work_phone",
         label: "Work Phone",
         type: "text",
-        requirement: "required",  // ✅ CHANGED from "optional" to "required"
+        requirement: "required",
         position: { x: 580, y: 420, maxWidth: 300, fontSize: 18, isBold: false, textAlign: "left" },
         dataSource: { sourceType: "employee_field", fieldPath: "employeeDetails.workPhone" }
       }
@@ -251,7 +358,9 @@ const getDefaultFields = (templateType = 'student') => {
   }
 };
 
-// UPLOAD template (UPDATED with default fields)
+// ============================================
+// UPLOAD TEMPLATE - FIXED for co-workers
+// ============================================
 router.post('/upload', upload.fields([
   { name: 'frontSide', maxCount: 1 },
   { name: 'backSide', maxCount: 1 }
@@ -278,13 +387,21 @@ router.post('/upload', upload.fields([
       return res.status(404).json({ success: false, error: 'Organization not found' });
     }
 
-    // Co-worker permission check
+    // Co-worker permission check - FIXED
     if (req.user.role === 'co_worker') {
+      if (!req.user.permissions || !Array.isArray(req.user.permissions)) {
+        return res.status(403).json({ success: false, error: 'Access denied - No permissions assigned' });
+      }
+
       const orgPerm = req.user.permissions.find(
-        p => p.organizationId.toString() === organizationId
+        p => p.organizationId && p.organizationId.toString() === organizationId
       );
+
       if (!orgPerm || !orgPerm.canManageTemplates) {
-        return res.status(403).json({ success: false, error: 'Access denied' });
+        return res.status(403).json({
+          success: false,
+          error: 'You do not have permission to create templates for this organization'
+        });
       }
     }
 
@@ -326,9 +443,7 @@ router.post('/upload', upload.fields([
         width: originalWidth,
         height: originalHeight
       },
-      // 🔥 ADD DEFAULT FIELDS
       fields: getDefaultFields(actualTemplateType),
-      // Store original dimensions for scaling
       originalWidth: originalWidth,
       originalHeight: originalHeight,
       isDefault: setAsDefault === 'true' || setAsDefault === true
@@ -377,58 +492,99 @@ router.post('/upload', upload.fields([
   }
 });
 
-// GET single template by ID
-router.get('/:id', async (req, res) => {
+// ============================================
+// SET DEFAULT TEMPLATE - FIXED for co-workers
+// ============================================
+router.patch('/:id/set-default', async (req, res) => {
   try {
-    const template = await Template.findOne({
-      _id: req.params.id,
-      companyId: req.user.companyId
-    }).populate('schoolId', 'name type');
-
+    const template = await Template.findById(req.params.id);
     if (!template) {
       return res.status(404).json({ success: false, error: 'Template not found' });
+    }
+    if (template.companyId.toString() !== req.user.companyId.toString()) {
+      return res.status(403).json({ success: false, error: 'Access denied' });
     }
 
     // Co-worker permission check
     if (req.user.role === 'co_worker') {
+      if (!req.user.permissions || !Array.isArray(req.user.permissions)) {
+        return res.status(403).json({ success: false, error: 'Access denied' });
+      }
+
       const orgPerm = req.user.permissions.find(
-        p => p.organizationId.toString() === template.schoolId._id.toString()
+        p => p.organizationId && p.organizationId.toString() === template.schoolId.toString()
       );
-      if (!orgPerm || !orgPerm.canGenerateCards) {
+
+      if (!orgPerm || !orgPerm.canManageTemplates) {
         return res.status(403).json({ success: false, error: 'Access denied' });
       }
     }
 
-    const templateObj = template.toObject();
-    const response = {
-      success: true,
-      template: {
-        ...templateObj,
-        frontSideUrl: templateObj.frontSide?.public_id ?
-          cloudinary.url(templateObj.frontSide.public_id, {
-            width: 400, height: 300, crop: 'fill', quality: 'auto'
-          }) : null,
-        backSideUrl: templateObj.backSide?.public_id ?
-          cloudinary.url(templateObj.backSide.public_id, {
-            width: 400, height: 300, crop: 'fill', quality: 'auto'
-          }) : null,
-        // Ensure fields are included
-        fields: templateObj.fields || [],
-        // Include original dimensions for scaling
-        originalWidth: templateObj.originalWidth || templateObj.frontSide?.width,
-        originalHeight: templateObj.originalHeight || templateObj.frontSide?.height
-      }
-    };
+    await Template.updateMany(
+      { schoolId: template.schoolId },
+      { $set: { isDefault: false } }
+    );
 
-    res.json(response);
+    template.isDefault = true;
+    await template.save();
+
+    res.json({ success: true, message: 'Default template updated' });
 
   } catch (error) {
-    console.error('Error fetching template:', error);
+    console.error('Set default error:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Also add a helper endpoint to add fields to existing templates
+// ============================================
+// DELETE TEMPLATE - FIXED for co-workers
+// ============================================
+router.delete('/:id', async (req, res) => {
+  try {
+    const template = await Template.findById(req.params.id);
+    if (!template) {
+      return res.status(404).json({ success: false, error: 'Template not found' });
+    }
+    if (template.companyId.toString() !== req.user.companyId.toString()) {
+      return res.status(403).json({ success: false, error: 'Access denied' });
+    }
+
+    // Co-worker permission check
+    if (req.user.role === 'co_worker') {
+      if (!req.user.permissions || !Array.isArray(req.user.permissions)) {
+        return res.status(403).json({ success: false, error: 'Access denied' });
+      }
+
+      const orgPerm = req.user.permissions.find(
+        p => p.organizationId && p.organizationId.toString() === template.schoolId.toString()
+      );
+
+      if (!orgPerm || !orgPerm.canManageTemplates) {
+        return res.status(403).json({ success: false, error: 'Access denied' });
+      }
+    }
+
+    const deletePromises = [];
+    if (template.frontSide?.public_id) {
+      deletePromises.push(cloudinary.uploader.destroy(template.frontSide.public_id));
+    }
+    if (template.backSide?.public_id) {
+      deletePromises.push(cloudinary.uploader.destroy(template.backSide.public_id));
+    }
+    await Promise.allSettled(deletePromises);
+    await Template.findByIdAndDelete(req.params.id);
+
+    res.json({ success: true, message: 'Template deleted successfully' });
+
+  } catch (error) {
+    console.error('Delete error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ============================================
+// ADD DEFAULT FIELDS TO EXISTING TEMPLATE
+// ============================================
 router.post('/:id/add-default-fields', async (req, res) => {
   try {
     const template = await Template.findById(req.params.id);
@@ -454,61 +610,9 @@ router.post('/:id/add-default-fields', async (req, res) => {
   }
 });
 
-// SET default template
-router.patch('/:id/set-default', async (req, res) => {
-  try {
-    const template = await Template.findById(req.params.id);
-    if (!template) {
-      return res.status(404).json({ success: false, error: 'Template not found' });
-    }
-    if (template.companyId.toString() !== req.user.companyId.toString()) {
-      return res.status(403).json({ success: false, error: 'Access denied' });
-    }
-
-    await Template.updateMany(
-      { schoolId: template.schoolId },
-      { $set: { isDefault: false } }
-    );
-
-    template.isDefault = true;
-    await template.save();
-
-    res.json({ success: true, message: 'Default template updated' });
-
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// DELETE template
-router.delete('/:id', async (req, res) => {
-  try {
-    const template = await Template.findById(req.params.id);
-    if (!template) {
-      return res.status(404).json({ success: false, error: 'Template not found' });
-    }
-    if (template.companyId.toString() !== req.user.companyId.toString()) {
-      return res.status(403).json({ success: false, error: 'Access denied' });
-    }
-
-    const deletePromises = [];
-    if (template.frontSide?.public_id) {
-      deletePromises.push(cloudinary.uploader.destroy(template.frontSide.public_id));
-    }
-    if (template.backSide?.public_id) {
-      deletePromises.push(cloudinary.uploader.destroy(template.backSide.public_id));
-    }
-    await Promise.allSettled(deletePromises);
-    await Template.findByIdAndDelete(req.params.id);
-
-    res.json({ success: true, message: 'Template deleted successfully' });
-
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// PREVIEW template
+// ============================================
+// PREVIEW TEMPLATE
+// ============================================
 router.get('/preview/:id', async (req, res) => {
   try {
     const template = await Template.findOne({
@@ -530,6 +634,7 @@ router.get('/preview/:id', async (req, res) => {
     res.redirect(url);
 
   } catch (error) {
+    console.error('Preview error:', error);
     res.status(500).json({ error: error.message });
   }
 });

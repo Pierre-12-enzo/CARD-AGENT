@@ -13,7 +13,7 @@ class SocketService extends EventEmitter {
      */
     init(io) {
         this.io = io;
-        
+
         // ==================== STUDENT EVENTS ====================
         this.on('student:created', (data) => {
             this.emitToCompany(data.companyId, 'student:created', data);
@@ -226,6 +226,20 @@ class SocketService extends EventEmitter {
 
         return stats;
     }
+
+
+    /**
+     * get batch status
+     */
+
+    getBatchStatus(batchId, userId) {
+        // This would need access to the progressStore
+        // You might want to pass a callback or emit directly
+        if (global.progressStore && global.progressStore.has(batchId)) {
+            this.emitToUser(userId, 'card:batch-progress', global.progressStore.get(batchId));
+        }
+    }
+
 }
 
 // Singleton instance

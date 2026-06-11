@@ -1,8 +1,13 @@
 // pages/dashboard/Templates.jsx - CARD-AGENT NAVY & CRIMSON
 import React, { useState, useEffect } from 'react';
 import { templateAPI, organizationAPI } from '../../services/api';
+import { useAuth } from '../../context/AuthContext';
+import toast from 'react-hot-toast';
 
 const Templates = () => {
+
+    const { user } = useAuth();
+
     const [templates, setTemplates] = useState([]);
     const [organizations, setOrganizations] = useState([]);
     const [selectedOrgId, setSelectedOrgId] = useState('');
@@ -38,16 +43,28 @@ const Templates = () => {
         }
     };
 
+    // In Templates.jsx, update the loadTemplates function
     const loadTemplates = async () => {
         setLoading(true);
         try {
-            const params = selectedOrgId ? { organizationId: selectedOrgId } : {};
-            const response = await templateAPI.getTemplates(params);
+            console.log('🔍 Loading templates - User role:', user?.role);
+            console.log('🔍 Loading templates - User permissions:', user?.permissions);
+
+            const response = await templateAPI.getTemplates({ organizationId: selectedOrg?._id });
+            console.log('📦 Templates API response:', response);
+
             if (response.success) {
                 setTemplates(response.templates || []);
+            } else {
+                console.error('API returned error:', response.error);
+                toast.error(response.error || 'Failed to load templates');
             }
         } catch (error) {
-            console.error('Failed to load templates:', error);
+            console.error('❌ Failed to load templates:', error);
+            console.error('Error response:', error.response);
+            console.error('Error status:', error.response?.status);
+            console.error('Error data:', error.response?.data);
+            toast.error(error.response?.data?.error || 'Failed to load templates');
         } finally {
             setLoading(false);
         }

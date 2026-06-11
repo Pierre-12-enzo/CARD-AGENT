@@ -228,7 +228,7 @@ export const organizationAPI = {
     const response = await api.post('/organizations', data, {
       headers: {
         'Content-Type': 'multipart/form-data'
-      } 
+      }
     });
     return response.data;
   },
@@ -239,12 +239,12 @@ export const organizationAPI = {
   },
 
   update: async (id, data) => {
-    const response = await api.put(`/organizations/${id}`, data,  {
+    const response = await api.put(`/organizations/${id}`, data, {
       headers: {
         'Content-Type': 'multipart/form-data'
       }
     });
-    
+
     return response.data;
   },
 
@@ -369,10 +369,24 @@ export const cardAPI = {
   },
 
   generateSingle: async (data) => {
-    const response = await api.post('/card/generate-single-card', data, {
-      responseType: 'blob'
-    });
-    return response.data;
+    try {
+      const response = await api.post('/card/generate-single-card', data, {
+        responseType: 'blob'
+      });
+      return response.data;
+    } catch (error) {
+      // If it's a blob error response, try to parse the error message
+      if (error.response && error.response.data instanceof Blob) {
+        const errorText = await error.response.data.text();
+        try {
+          const errorJson = JSON.parse(errorText);
+          throw { response: { data: errorJson } };
+        } catch {
+          throw error;
+        }
+      }
+      throw error;
+    }
   },
 
   generateBatchFromDB: async (data) => {

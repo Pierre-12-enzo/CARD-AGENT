@@ -1,5 +1,4 @@
-// pages/dashboard/CardGeneration.jsx - COMPLETE REWRITE
-// Features: Fixed scaling, dynamic field mapping, real-time batch progress with WebSocket, ETA, failed list
+// pages/dashboard/CardGeneration.jsx - FIXED VERSION
 import React, { useState, useRef, useMemo, useEffect, useCallback } from 'react';
 import { DndContext, useDraggable, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { CSS } from '@dnd-kit/utilities';
@@ -20,11 +19,11 @@ const CardGeneration = () => {
     const [batchMethod, setBatchMethod] = useState('upload');
 
     // ==================== BATCH PROGRESS (WebSocket) ====================
-    const { progress: batchProgress, resetProgress: resetBatchProgress, socketReady } = useBatchProgress();
+    const { progress: batchProgress, resetProgress: resetBatchProgress, socketReady, subscribeToBatch } = useBatchProgress();
     const [showProgressModal, setShowProgressModal] = useState(false);
     const [currentBatchId, setCurrentBatchId] = useState(null);
     const [downloadUrl, setDownloadUrl] = useState(null);
-    const [isBatchRunning, setIsBatchRunning] = useState(false); // Track if batch is actively running
+    const [isBatchRunning, setIsBatchRunning] = useState(false);
 
     // ==================== DATA STATE ====================
     const [organizations, setOrganizations] = useState([]);
@@ -43,10 +42,8 @@ const CardGeneration = () => {
     const [showPhotoModal, setShowPhotoModal] = useState(false);
     const [uploadedPhoto, setUploadedPhoto] = useState(null);
     const [photoUploadStatus, setPhotoUploadStatus] = useState('idle');
-
     const [showMissingFieldsModal, setShowMissingFieldsModal] = useState(false);
     const [missingFields, setMissingFields] = useState([]);
-
 
     // ==================== QUICK CREATE ====================
     const [quickStudent, setQuickStudent] = useState({
@@ -99,7 +96,7 @@ const CardGeneration = () => {
     const [validating, setValidating] = useState(false);
     const [generationStatus, setGenerationStatus] = useState('idle');
 
-    // ==================== COORDINATES (STORED IN ORIGINAL DIMENSIONS) ====================
+    // ==================== COORDINATES ====================
     const [coordinates, setCoordinates] = useState({
         photo: { x: 50, y: 230, width: 250, height: 250 },
         name: { x: 580, y: 225, maxWidth: 500 },
@@ -111,7 +108,7 @@ const CardGeneration = () => {
         academic_year: { x: 670, y: 472, maxWidth: 300 }
     });
 
-    // ==================== TEMPLATE DIMENSIONS (FOR SCALING) ====================
+    // ==================== TEMPLATE DIMENSIONS ====================
     const [templateDimensions, setTemplateDimensions] = useState({
         originalWidth: 1200,
         originalHeight: 678,
@@ -139,20 +136,30 @@ const CardGeneration = () => {
         };
     }, []);
 
-    // Monitor batch progress to update running state and generation status
+    // Monitor batch progress
     useEffect(() => {
-        if (batchProgress.status === 'generating' || batchProgress.status === 'started' || batchProgress.status === 'processing') {
+        if (batchProgress?.status === 'generating' || batchProgress?.status === 'started' || batchProgress?.status === 'processing') {
             setIsBatchRunning(true);
             setGenerationStatus('processing');
-        } else if (batchProgress.status === 'completed' || batchProgress.status === 'error') {
+        } else if (batchProgress?.status === 'completed' || batchProgress?.status === 'error') {
             setIsBatchRunning(false);
-            if (batchProgress.status === 'completed') {
+            if (batchProgress?.status === 'completed') {
                 setGenerationStatus('completed');
+                // Auto-download when complete
+                if (downloadUrl) {
+                    const a = document.createElement('a');
+                    a.href = downloadUrl;
+                    a.download = `batch-cards-${Date.now()}.zip`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    toast.success(`${batchProgress.generated || 0} cards generated successfully!`);
+                }
             } else {
                 setGenerationStatus('error');
             }
         }
-    }, [batchProgress.status]);
+    }, [batchProgress, downloadUrl]);
 
     // ==================== LOAD DATA ====================
     useEffect(() => {
@@ -174,14 +181,12 @@ const CardGeneration = () => {
         }
     }, [selectedTemplateId, templates]);
 
-    // Fetch filter options when organization or person filter changes
     useEffect(() => {
         if (selectedOrgId && batchMethod === 'database') {
             fetchFilterOptions();
         }
     }, [selectedOrgId, personFilter, batchMethod]);
 
-    // GETTING FILTER OPTIONS FOR STUDENTS OR EMPLOYEE
     const fetchFilterOptions = async () => {
         try {
             const response = await studentAPI.getFilterOptions(selectedOrgId);
@@ -246,7 +251,6 @@ const CardGeneration = () => {
         }
     };
 
-    // CRITICAL: Load real template dimensions for proper scaling
     const loadTemplateDimensions = async () => {
         if (!selectedTemplateId) return;
         try {
@@ -263,38 +267,27 @@ const CardGeneration = () => {
                     previewHeight,
                     scaleFactor: parseFloat(scaleFactor)
                 });
-
-                console.log('✅ Template dimensions loaded:', {
-                    original: `${response.dimensions.original?.width}x${response.dimensions.original?.height}`,
-                    preview: `${previewWidth}x${previewHeight}`,
-                    scaleFactor
-                });
             }
         } catch (error) {
             console.error('Failed to load dimensions:', error);
         }
     };
 
-    // ==================== GET FILTERED BATCH STUDENTS ====================
     const getFilteredBatchStudents = useCallback(() => {
         return students.filter(student => {
-            // Person type filter
             if (personFilter !== 'all' && student.personType !== personFilter) return false;
 
-            // Student-specific filters
             if (student.personType === 'student') {
                 if (batchFilters.class && student.studentDetails?.class !== batchFilters.class) return false;
                 if (batchFilters.level && student.studentDetails?.level !== batchFilters.level) return false;
                 if (batchFilters.academic_year && student.studentDetails?.academic_year !== batchFilters.academic_year) return false;
             }
 
-            // Employee-specific filters
             if (student.personType === 'employee') {
                 if (batchFilters.department && student.employeeDetails?.department !== batchFilters.department) return false;
                 if (batchFilters.position && student.employeeDetails?.position !== batchFilters.position) return false;
             }
 
-            // Gender filter
             if (batchFilters.gender && student.gender !== batchFilters.gender) return false;
 
             return true;
@@ -305,13 +298,6 @@ const CardGeneration = () => {
     const handleDragStart = useCallback((event) => {
         setActiveDragField(event.active.id);
     }, []);
-
-    const handleCoordinateInputChange = (field, key, value) => {
-        setCoordinates(prev => ({
-            ...prev,
-            [field]: { ...prev[field], [key]: parseInt(value) || 0 }
-        }));
-    };
 
     // ==================== FIELD MAPPING HANDLERS ====================
     const handleSaveFieldMappings = async (updatedFields, mappings) => {
@@ -363,8 +349,8 @@ const CardGeneration = () => {
     };
 
     // ==================== SINGLE CARD GENERATION ====================
+    // ==================== SINGLE CARD GENERATION - SIMPLIFIED ====================
     const generateSingleCard = async (student) => {
-        console.log('Generating single card for:', student?._id, 'with template:', selectedTemplateId);
         if (!selectedTemplateId || !student) {
             toast.error('Select a template and person');
             return;
@@ -373,29 +359,18 @@ const CardGeneration = () => {
         setGenerationStatus('processing');
 
         try {
-            const validation = await cardAPI.previewValidation({
-                templateId: selectedTemplateId,
-                studentId: student._id,
-                personType: student.personType
-            });
-
-            if (!validation.isValid) {
-                setMissingFields(validation.missingFields || []);
-                setShowMissingFieldsModal(true);
-                setGenerationStatus('idle');
-                return;
-            }
+            // Skip preview-validation - let backend handle validation
+            // The backend will return 400 with missingFields if validation fails
 
             const blob = await cardAPI.generateSingle({
                 studentId: student._id,
-                templateId: selectedTemplateId,
-                coordinates: JSON.stringify(coordinates)
+                templateId: selectedTemplateId
             });
 
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `id-card-${student.student_id || student.employeeId || 'person'}.zip`;
+            a.download = `id-card-${student.student_id || student.employeeDetails?.employeeId || 'person'}.zip`;
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
@@ -406,25 +381,20 @@ const CardGeneration = () => {
 
         } catch (error) {
             console.error('Single card generation error:', error);
+
+            // Check if the error contains missing fields information
+            if (error.response?.data?.missingFields) {
+                setMissingFields(error.response.data.missingFields);
+                setShowMissingFieldsModal(true);
+            } else {
+                toast.error(`Generation failed: ${error.response?.data?.error || error.message}`);
+            }
+
             setGenerationStatus('error');
-            toast.error(`Generation failed: ${error.message}`);
         }
     };
 
-    // ==================== AUTO DOWNLOAD AFTER BATCH COMPLETION ====================
-    useEffect(() => {
-        if (batchProgress.status === 'completed' && batchProgress.generated > 0 && downloadUrl) {
-            const a = document.createElement('a');
-            a.href = downloadUrl;
-            a.download = `batch-cards-${Date.now()}.zip`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            toast.success(`${batchProgress.generated} cards generated successfully! Download started.`);
-        }
-    }, [batchProgress.status, batchProgress.generated, downloadUrl]);
-
-    // ==================== BATCH GENERATION (WITH WEBSOCKET PROGRESS) ====================
+    // ==================== BATCH GENERATION ====================
     const startBatchGeneration = async () => {
         if (!selectedTemplateId || !selectedOrgId) {
             toast.error('Select organization and template');
@@ -436,11 +406,9 @@ const CardGeneration = () => {
             return;
         }
 
-        // Create new abort controller for this batch
         abortControllerRef.current = new AbortController();
 
         setShowProgressModal(true);
-        setCurrentBatchId(null);
         resetBatchProgress();
         setGenerationStatus('processing');
         setDownloadUrl(null);
@@ -448,6 +416,14 @@ const CardGeneration = () => {
 
         try {
             let blob;
+
+            // Generate a single batch ID that will be used by both frontend and backend
+            const batchId = `batch-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+            setCurrentBatchId(batchId);
+
+            // Subscribe to progress BEFORE making the API call
+            subscribeToBatch(batchId);
+
             if (batchMethod === 'database') {
                 const filteredStudents = getFilteredBatchStudents();
 
@@ -459,13 +435,12 @@ const CardGeneration = () => {
                     return;
                 }
 
-                console.log('Starting batch generation for', filteredStudents.length, 'people');
-
                 blob = await cardAPI.generateBatchFromDB({
                     templateId: selectedTemplateId,
                     filters: batchFilters,
                     organizationId: selectedOrgId,
-                    personType: personFilter
+                    personType: personFilter,
+                    batchId: batchId  // Send the batchId to backend
                 }, {
                     signal: abortControllerRef.current.signal
                 });
@@ -475,6 +450,7 @@ const CardGeneration = () => {
                 formData.append('templateId', selectedTemplateId);
                 formData.append('organizationId', selectedOrgId);
                 formData.append('coordinates', JSON.stringify(coordinates));
+                formData.append('batchId', batchId);  // Send the batchId to backend
                 if (photoZipFile) formData.append('photoZip', photoZipFile);
                 if (personFilter !== 'all') formData.append('personType', personFilter);
 
@@ -488,7 +464,6 @@ const CardGeneration = () => {
 
         } catch (error) {
             if (error.name === 'AbortError' || error.code === 'ERR_CANCELED') {
-                console.log('Batch generation was cancelled by user');
                 toast.error('Batch generation was cancelled');
             } else {
                 console.error('Batch generation error:', error);
@@ -501,7 +476,6 @@ const CardGeneration = () => {
         }
     };
 
-    // Cancel batch generation
     const cancelBatchGeneration = () => {
         if (abortControllerRef.current) {
             abortControllerRef.current.abort();
@@ -513,8 +487,7 @@ const CardGeneration = () => {
     };
 
     const handleCloseProgressModal = () => {
-        if (isBatchRunning && batchProgress.status === 'generating') {
-            // Show warning if generation is still in progress
+        if (isBatchRunning && batchProgress?.status === 'generating') {
             const confirmClose = window.confirm(
                 '⚠️ Warning: Cards are still being generated!\n\n' +
                 'If you close this window, the generation will be cancelled and you will lose all progress.\n\n' +
@@ -527,7 +500,6 @@ const CardGeneration = () => {
                 toast.info('Batch generation cancelled');
             }
         } else {
-            // Safe to close
             setShowProgressModal(false);
             resetBatchProgress();
             setDownloadUrl(null);
@@ -652,7 +624,6 @@ const CardGeneration = () => {
         }
     };
 
-    // ==================== FILTERED STUDENTS (for search) ====================
     const filteredStudentsList = useMemo(() => {
         return students.filter(student => {
             const term = searchTerm.toLowerCase().trim();
@@ -680,17 +651,20 @@ const CardGeneration = () => {
         return null;
     }, [students]);
 
-    // ==================== FIELD POSITION SYNC ====================
     const updateFieldPosition = useCallback((fieldName, x, y, extra = {}) => {
         if (!selectedTemplate) return;
+
+        // CRITICAL: These x,y from the preview are already in ORIGINAL dimensions
+        // because we convert them in handleDragEnd. So we don't need to scale here.
 
         let width = extra.width;
         let height = extra.height;
 
-        if (width !== undefined) {
+        // If width/height are from preview (scaled), convert to original
+        if (width !== undefined && extra.isFromPreview) {
             width = Math.round(width / templateDimensions.scaleFactor);
         }
-        if (height !== undefined) {
+        if (height !== undefined && extra.isFromPreview) {
             height = Math.round(height / templateDimensions.scaleFactor);
         }
 
@@ -700,10 +674,10 @@ const CardGeneration = () => {
                     ...field,
                     position: {
                         ...field.position,
-                        x: x,
-                        y: y,
-                        ...(width !== undefined && { width: width }),
-                        ...(height !== undefined && { height: height }),
+                        x: Math.max(0, x),
+                        y: Math.max(0, y),
+                        ...(width !== undefined && { width: Math.max(50, width) }),
+                        ...(height !== undefined && { height: Math.max(50, height) }),
                         ...extra
                     }
                 };
@@ -716,18 +690,17 @@ const CardGeneration = () => {
             fields: updatedFields
         }));
     }, [selectedTemplate, templateDimensions.scaleFactor]);
-
     const saveFieldPositions = async () => {
         if (!selectedTemplate || !selectedTemplate.fields) return;
 
         try {
             await cardAPI.updateTemplateFields(selectedTemplateId, selectedTemplate.fields);
-            console.log('✅ Field positions saved');
+            toast.success('Field positions saved');
         } catch (error) {
             console.error('Failed to save positions:', error);
+            toast.error('Failed to save positions');
         }
     };
-
     const handleDragEnd = useCallback((event) => {
         const { active, delta } = event;
         if (!active || !previewContainerRef.current || !selectedTemplate) return;
@@ -738,18 +711,37 @@ const CardGeneration = () => {
         const field = selectedTemplate.fields.find(f => f.name === fieldName);
         if (!field || !field.position) return;
 
-        const scaleFactor = templateDimensions.scaleFactor;
-        const deltaX_original = Math.round(delta.x / scaleFactor);
-        const deltaY_original = Math.round(delta.y / scaleFactor);
+        // Get the actual preview container dimensions
+        const containerRect = previewContainerRef.current.getBoundingClientRect();
+        const previewWidth = containerRect.width;
+
+        // Get the original template dimensions
+        const originalWidth = templateDimensions.originalWidth;
+
+        // Calculate the ACTUAL scale factor based on current preview size
+        const actualScaleFactor = previewWidth / originalWidth;
+
+        // Delta from dnd-kit is in screen pixels (preview coordinates)
+        // Convert to original dimensions
+        const deltaX_original = Math.round(delta.x / actualScaleFactor);
+        const deltaY_original = Math.round(delta.y / actualScaleFactor);
 
         const newX = Math.max(0, (field.position.x || 0) + deltaX_original);
         const newY = Math.max(0, (field.position.y || 0) + deltaY_original);
 
+        console.log(`🔍 Drag Debug:`, {
+            field: fieldName,
+            originalPosition: { x: field.position.x, y: field.position.y },
+            deltaPreview: { x: delta.x, y: delta.y },
+            actualScaleFactor,
+            deltaOriginal: { x: deltaX_original, y: deltaY_original },
+            newPosition: { x: newX, y: newY },
+            previewWidth,
+            originalWidth
+        });
+
         updateFieldPosition(fieldName, newX, newY);
-
-        console.log(`Moved ${field.label}: (${newX}, ${newY})`);
-    }, [selectedTemplate, templateDimensions.scaleFactor, updateFieldPosition]);
-
+    }, [selectedTemplate, templateDimensions.originalWidth, updateFieldPosition]);
     return (
         <div className="min-h-screen bg-slate-50 p-4 sm:p-6">
             <div className="max-w-7xl mx-auto">
@@ -847,7 +839,8 @@ const CardGeneration = () => {
             </div>
 
             {/* Missing Fields Modal */}
-            {showMissingFieldsModal && (
+            {/* Missing Fields Modal - Make sure it shows when missingFields.length > 0 */}
+            {showMissingFieldsModal && missingFields.length > 0 && (
                 <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
                     <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl animate-scale-in">
                         <div className="text-center mb-4">
@@ -864,7 +857,7 @@ const CardGeneration = () => {
                                 {missingFields.map((field, idx) => (
                                     <li key={idx} className="text-sm text-amber-700 flex items-center gap-2">
                                         <i className="pi pi-times-circle text-amber-500 text-xs"></i>
-                                        {field.fieldLabel}
+                                        {field.fieldLabel || field}
                                     </li>
                                 ))}
                             </ul>
@@ -872,7 +865,10 @@ const CardGeneration = () => {
 
                         <div className="flex gap-3">
                             <button
-                                onClick={() => setShowMissingFieldsModal(false)}
+                                onClick={() => {
+                                    setShowMissingFieldsModal(false);
+                                    setMissingFields([]);
+                                }}
                                 className="flex-1 px-4 py-2.5 border border-slate-300 rounded-xl text-slate-700 font-medium hover:bg-slate-50"
                             >
                                 Close
@@ -880,6 +876,11 @@ const CardGeneration = () => {
                             <button
                                 onClick={() => {
                                     setShowMissingFieldsModal(false);
+                                    // Optionally navigate to edit student page
+                                    if (selectedStudent) {
+                                        // Navigate to student edit page
+                                        // navigate(`/students/${selectedStudent._id}/edit`);
+                                    }
                                 }}
                                 className="flex-1 bg-gradient-to-r from-red-600 to-red-500 text-white py-2.5 rounded-xl font-medium hover:from-red-700 hover:to-red-600"
                             >
@@ -887,6 +888,19 @@ const CardGeneration = () => {
                             </button>
                         </div>
                     </div>
+                </div>
+            )}
+
+
+
+            {/* In BatchProgressModal component, add a waiting state */}
+            {batchProgress?.status === 'waiting' && (
+                <div className="text-center py-8">
+                    <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <i className="pi pi-spin pi-spinner text-amber-600 text-2xl"></i>
+                    </div>
+                    <p className="text-amber-800 font-medium">{batchProgress.message || 'Processing upload...'}</p>
+                    <p className="text-sm text-amber-600 mt-1">This may take a moment</p>
                 </div>
             )}
 
@@ -1225,7 +1239,7 @@ const CardGeneration = () => {
                             />
                         )}
 
-                        {/* ==================== STEP 4: COORDINATES (DRAG & DROP WITH DYNAMIC FIELDS) ==================== */}
+                        {/* ==================== STEP 4: COORDINATES ==================== */}
                         {activeStep === 'coordinates' && (
                             <div className="space-y-4">
                                 <div className="flex items-center justify-between">
@@ -1272,7 +1286,6 @@ const CardGeneration = () => {
                                                             const actualHeight = img.clientHeight;
                                                             const originalWidth = selectedTemplate.originalWidth || templateDimensions.originalWidth;
                                                             const actualScaleFactor = actualWidth / originalWidth;
-                                                            console.log('📐 Image loaded:', { actualWidth, actualHeight, originalWidth, scaleFactor: actualScaleFactor });
                                                             setTemplateDimensions(prev => ({ ...prev, actualPreviewWidth: actualWidth, actualPreviewHeight: actualHeight, actualScaleFactor }));
                                                         }}
                                                     />
@@ -1344,7 +1357,6 @@ const CardGeneration = () => {
 
                                                         const displayText = getFieldPreviewValue();
 
-                                                        // For photo fields, pass the properly scaled dimensions
                                                         const photoWidth = field.type === 'photo' && field.position?.width
                                                             ? field.position.width * scale
                                                             : undefined;
@@ -1830,13 +1842,6 @@ const CardGeneration = () => {
                     </div>
                 </div>
             )}
-
-            {/* Helper Components */}
-            <FileUploadCard title="Student Data (CSV)" accept=".csv" icon="pi-file-excel" color="red" onFileSelect={setCsvFile} />
-
-            {/* DraggableItem Component */}
-            <DraggableItem id="test" displayX={0} displayY={0} label="Test" isPhotoField={false} isActive={false} />
-
         </div>
     );
 };
@@ -1853,23 +1858,40 @@ const StepButton = ({ step, title, icon, active, onClick }) => (
 );
 
 const FileUploadCard = ({ title, accept, icon, color, onFileSelect, note }) => {
-    const [file, setFile] = useState(null);
+    const [fileName, setFileName] = useState(null);
+    const inputId = title.replace(/\s/g, '');
+
     return (
         <div className="border-2 border-dashed border-slate-300 rounded-xl p-4 text-center hover:border-red-300 transition-colors">
             <div className={`w-12 h-12 ${color === 'red' ? 'bg-gradient-to-br from-red-600 to-red-500' : 'bg-gradient-to-br from-slate-700 to-slate-800'} rounded-xl flex items-center justify-center mx-auto mb-2 shadow-lg`}>
                 <i className={`${icon} text-white text-xl`}></i>
             </div>
             <p className="font-medium text-slate-700">{title}</p>
-            <input type="file" accept={accept} className="hidden" id={title.replace(/\s/g, '')} onChange={(e) => { const f = e.target.files[0]; if (f) { setFile(f); onFileSelect(f); } }} />
-            <label htmlFor={title.replace(/\s/g, '')} className="inline-block mt-2 text-sm bg-slate-100 hover:bg-slate-200 px-4 py-1.5 rounded-lg cursor-pointer text-slate-700 transition-colors">
-                {file ? file.name : 'Choose File'}
+            <input
+                type="file"
+                accept={accept}
+                className="hidden"
+                id={inputId}
+                onChange={(e) => {
+                    const f = e.target.files[0];
+                    if (f) {
+                        setFileName(f.name);
+                        onFileSelect(f);
+                    }
+                }}
+            />
+            <label
+                htmlFor={inputId}
+                className="inline-block mt-2 text-sm bg-slate-100 hover:bg-slate-200 px-4 py-1.5 rounded-lg cursor-pointer text-slate-700 transition-colors"
+            >
+                {fileName || 'Choose File'}
             </label>
             {note && <p className="text-xs text-slate-400 mt-1">{note}</p>}
         </div>
     );
 };
 
-const DraggableItem = ({ id, displayX, displayY, label, isPhotoField, isActive, field, sampleStudent, selectedStudent, generationMode, previewScale, previewPhotoWidth, previewPhotoHeight }) => {
+const DraggableItem = ({ id, displayX, displayY, label, isPhotoField, isActive, field, sampleStudent, selectedStudent, generationMode, previewScale, previewPhotoWidth, previewPhotoHeight, onPositionChange }) => {
     const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id });
 
     const [photoUrl, setPhotoUrl] = useState(null);
@@ -1899,7 +1921,6 @@ const DraggableItem = ({ id, displayX, displayY, label, isPhotoField, isActive, 
         cursor: 'grab',
     };
 
-    // For photo fields - render with styling and proper scaled dimensions
     if (isPhotoField && field) {
         const styling = field.styling || {};
         const {
@@ -1913,7 +1934,6 @@ const DraggableItem = ({ id, displayX, displayY, label, isPhotoField, isActive, 
             noBorder = false
         } = styling;
 
-        // Use preview-scaled dimensions if provided, otherwise calculate
         const width = previewPhotoWidth || (field.position?.width || 250) * (previewScale || 1);
         const height = previewPhotoHeight || (field.position?.height || 250) * (previewScale || 1);
 
@@ -1960,14 +1980,32 @@ const DraggableItem = ({ id, displayX, displayY, label, isPhotoField, isActive, 
                             const startWidth = width;
                             const startHeight = height;
 
+                            // Get scale factor for converting preview size to original
+                            const scale = previewScale || 1;
+
                             const onMouseMove = (moveEvent) => {
                                 const deltaX = moveEvent.clientX - startX;
                                 const deltaY = moveEvent.clientY - startY;
-                                const newWidth = Math.max(50, startWidth + deltaX);
-                                const newHeight = Math.max(50, startHeight + deltaY);
+
+                                // New size in preview pixels
+                                const newPreviewWidth = Math.max(50, startWidth + deltaX);
+                                const newPreviewHeight = Math.max(50, startHeight + deltaY);
+
+                                // Convert to original dimensions
+                                const newOriginalWidth = Math.round(newPreviewWidth / scale);
+                                const newOriginalHeight = Math.round(newPreviewHeight / scale);
 
                                 if (window.updateFieldPosition) {
-                                    window.updateFieldPosition(field.name, field.position?.x || 0, field.position?.y || 0, { width: newWidth, height: newHeight });
+                                    window.updateFieldPosition(
+                                        field.name,
+                                        field.position?.x || 0,
+                                        field.position?.y || 0,
+                                        {
+                                            width: newOriginalWidth,
+                                            height: newOriginalHeight,
+                                            isFromPreview: true
+                                        }
+                                    );
                                 }
                             };
 
@@ -1990,7 +2028,6 @@ const DraggableItem = ({ id, displayX, displayY, label, isPhotoField, isActive, 
         );
     }
 
-    // For text fields
     return (
         <div ref={setNodeRef} style={style} {...listeners} {...attributes} className={`select-none transition-transform duration-150 ${isDragging ? 'scale-110' : 'hover:scale-105'}`}>
             <div className={`px-3 py-1.5 rounded-xl text-xs font-bold shadow-2xl border-2 backdrop-blur-sm whitespace-nowrap max-w-[200px] truncate ${isDragging ? 'bg-gradient-to-r from-red-600 to-red-500 text-white border-red-300 shadow-red-500/50' :
@@ -2002,6 +2039,5 @@ const DraggableItem = ({ id, displayX, displayY, label, isPhotoField, isActive, 
         </div>
     );
 };
-
 
 export default CardGeneration;

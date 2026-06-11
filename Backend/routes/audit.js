@@ -141,7 +141,7 @@ const buildAuditQuery = async (req, filters = {}) => {
 };
 
 // ============================================
-// GET /logs - Main audit logs endpoint
+// GET /logs - With co-worker filtering
 // ============================================
 router.get('/logs', async (req, res) => {
     try {
@@ -149,133 +149,117 @@ router.get('/logs', async (req, res) => {
             page = 1,
             limit = 20,
             action,
-            userId,
-            companyId,
-            schoolId,
-            status,
-            importance,
-            startDate,
-            endDate,
-            search
+            days = 7,
+            userId
         } = req.query;
 
-        // Build query based on user role
-        const query = await buildAuditQuery(req, {
-            action,
-            userId,
-            companyId,
-            schoolId,
-            status,
-            importance,
-            startDate,
-            endDate,
-            search
-        });
+        const query = {};
+
+        // ==================== ROLE-BASED FILTERING ====================
+
+        if (req.user.role === 'super_admin') {
+            // Super admin sees everything
+            if (userId) query.userId = userId;
+        }
+        else if (req.user.role === 'admin') {
+            // Admin sees all logs from their company
+            query.companyId = req.user.companyId;
+            if (userId) {
+                const targetUser = await User.findOne({ _id: userId, companyId: req.user.companyId });
+                if (!targetUser) {
+                    return res.status(403).json({ success: false, error: 'Access denied' });
+                }
+                query.userId = userId;
+            }
+        }
+        else if (req.user.role === 'co_worker') {
+            // 🔥 CO-WORKER: See their own actions + other co-workers in same orgs
+
+            // Get all organization IDs this co-worker has access to
+            const allowedOrgIds = req.user.permissions
+                ?.filter(p => p.canViewAuditLogs === true || p.canManageStudents === true)
+                .map(p => p.organizationId?.toString()) || [];
+
+            if (allowedOrgIds.length === 0) {
+                return res.json({
+                    success: true,
+                    logs: [],
+                    message: 'No audit log permissions',
+                    pagination: { page: 1, limit: 20, total: 0, pages: 0 }
+                });
+            }
+
+            // Find all co-workers who have access to these same organizations
+            const allCoWorkers = await User.find({
+                companyId: req.user.companyId,
+                role: 'co_worker',
+                'permissions.organizationId': { $in: allowedOrgIds }
+            }).distinct('_id');
+
+            // Add current user to the list
+            const visibleUserIds = [...new Set([req.user.id, ...allCoWorkers.map(id => id.toString())])];
+
+            // Build query: logs from these users AND from these organizations
+            query.$and = [
+                { userId: { $in: visibleUserIds } },
+                { schoolId: { $in: allowedOrgIds } },
+                { companyId: req.user.companyId }
+            ];
+
+            // Exclude admin actions (co-workers shouldn't see admin activity)
+            query['userInfo.role'] = { $ne: 'admin' };
+
+            if (userId) {
+                // If filtering by specific user, ensure they are a co-worker in allowed orgs
+                if (!visibleUserIds.includes(userId)) {
+                    return res.status(403).json({ success: false, error: 'Access denied' });
+                }
+                query.userId = userId;
+            }
+        }
+
+        // ==================== DATE FILTER ====================
+        if (days) {
+            const startDate = new Date();
+            startDate.setDate(startDate.getDate() - parseInt(days));
+            query.createdAt = { $gte: startDate };
+        }
+
+        // ==================== ACTION FILTER ====================
+        if (action) {
+            query.action = action;
+        }
 
         const skip = (parseInt(page) - 1) * parseInt(limit);
 
-        // Fetch logs and total count
         const [logs, total] = await Promise.all([
             AuditLog.find(query)
                 .sort({ createdAt: -1 })
                 .skip(skip)
                 .limit(parseInt(limit))
                 .populate('userId', 'firstName lastName email role')
-                .populate('companyId', 'name'),
+                .populate('schoolId', 'name'),
             AuditLog.countDocuments(query)
         ]);
 
-        // Get stats based on filtered query
-        const stats = await AuditLog.aggregate([
-            { $match: query },
-            {
-                $facet: {
-                    totalCount: [{ $count: 'count' }],
-                    successRate: [
-                        {
-                            $group: {
-                                _id: null,
-                                total: { $sum: 1 },
-                                success: { $sum: { $cond: [{ $eq: ['$status', 'success'] }, 1, 0] } },
-                                failed: { $sum: { $cond: [{ $eq: ['$status', 'failure'] }, 1, 0] } }
-                            }
-                        }
-                    ],
-                    byImportance: [
-                        { $group: { _id: '$importance', count: { $sum: 1 } } }
-                    ],
-                    byAction: [
-                        { $group: { _id: '$action', count: { $sum: 1 } } },
-                        { $sort: { count: -1 } },
-                        { $limit: 10 }
-                    ]
-                }
-            }
-        ]);
-
-        // ==================== GET ACCESSIBLE USERS FOR FILTER DROPDOWN ====================
-        let accessibleUsers = [];
-        let accessibleOrganizations = [];
-
-        if (req.user.role === 'super_admin') {
-            // Super admin can see all users
-            accessibleUsers = await User.find({}, 'firstName lastName email role companyId')
-                .populate('companyId', 'name')
-                .limit(100);
-
-            // Super admin can see all organizations
-            accessibleOrganizations = await School.find({}, 'name type code companyId')
-                .populate('companyId', 'name')
-                .limit(100);
-
-        }
-        else if (req.user.role === 'admin') {
-            // Admin can see all users in their company (admin + co-workers)
-            accessibleUsers = await User.find({
-                companyId: req.user.companyId,
-                role: { $in: ['admin', 'co_worker'] }
-            }, 'firstName lastName email role companyId');
-
-            // Admin can see all organizations in their company
-            accessibleOrganizations = await School.find({
-                companyId: req.user.companyId
-            }, 'name type code');
-        }
-        else if (req.user.role === 'co_worker') {
-            // Co-worker can only see other co-workers in their company (not admin)
-            accessibleUsers = await User.find({
-                companyId: req.user.companyId,
-                role: 'co_worker'
-            }, 'firstName lastName email role companyId');
-
-            // Co-worker can only see organizations they have permission for
-            const allowedOrgIds = req.user.permissions
-                ?.filter(p => p.canViewAuditLogs)
-                .map(p => p.organizationId) || [];
-
-            accessibleOrganizations = await School.find({
-                _id: { $in: allowedOrgIds },
-                companyId: req.user.companyId
-            }, 'name type code');
-        }
+        // Transform logs for co-worker view (remove sensitive info)
+        const safeLogs = logs.map(log => {
+            const logObj = log.toObject();
+            return {
+                _id: logObj._id,
+                action: logObj.action,
+                details: logObj.details,
+                status: logObj.status,
+                createdAt: logObj.createdAt,
+                userInfo: logObj.userInfo,
+                schoolInfo: logObj.schoolInfo,
+                changes: logObj.changes
+            };
+        });
 
         res.json({
             success: true,
-            logs,
-            stats: stats[0] || {
-                totalCount: [{ count: 0 }],
-                successRate: [{ total: 0, success: 0, failed: 0 }],
-                byImportance: [],
-                byAction: []
-            },
-            accessibleUsers,
-            accessibleOrganizations,
-            currentUser: {
-                id: req.user.id,
-                name: `${req.user.firstName} ${req.user.lastName}`,
-                role: req.user.role,
-                companyId: req.user.companyId
-            },
+            logs: safeLogs,
             pagination: {
                 page: parseInt(page),
                 limit: parseInt(limit),
@@ -286,10 +270,7 @@ router.get('/logs', async (req, res) => {
 
     } catch (error) {
         console.error('Audit logs error:', error);
-        res.status(error.message === 'Access denied' ? 403 : 500).json({
-            success: false,
-            error: error.message || 'Failed to fetch audit logs'
-        });
+        res.status(500).json({ success: false, error: error.message });
     }
 });
 
@@ -427,6 +408,44 @@ router.get('/stats/summary', async (req, res) => {
 
     } catch (error) {
         console.error('Stats error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+
+
+// ============================================
+// GET /my-activity - Quick view for co-worker dashboard
+// ============================================
+router.get('/my-activity', async (req, res) => {
+    try {
+        const { limit = 10 } = req.query;
+
+        const query = {
+            userId: req.user.id,
+            companyId: req.user.companyId
+        };
+
+        // For co-workers, only show their own recent activity
+        if (req.user.role === 'co_worker') {
+            const allowedOrgIds = req.user.permissions?.map(p => p.organizationId) || [];
+            if (allowedOrgIds.length > 0) {
+                query.schoolId = { $in: allowedOrgIds };
+            }
+        }
+
+        const recentActivity = await AuditLog.find(query)
+            .sort({ createdAt: -1 })
+            .limit(parseInt(limit))
+            .populate('schoolId', 'name');
+
+        res.json({
+            success: true,
+            activities: recentActivity
+        });
+
+    } catch (error) {
+        console.error('My activity error:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });

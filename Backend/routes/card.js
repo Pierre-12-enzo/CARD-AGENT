@@ -10,12 +10,13 @@ const School = require('../models/School');
 const authMiddleware = require('../middleware/authMiddleware');
 const archiver = require('archiver');
 const socketService = require('../services/socketService');
-
 const CardHistory = require('../models/CardHistory');
 
 
 
 const progressStore = new Map();
+module.exports.progressStore = progressStore;
+
 
 const { parseCSVFromBuffer } = require('../utilis/csvParser');
 const { extractAndUploadPhotosToCloudinary } = require('../utilis/cloudinaryUpload');
@@ -551,10 +552,13 @@ async function createZipInMemory(files) {
 // ==================== PREVIEW VALIDATION ENDPOINT ====================
 router.post('/preview-validation', authMiddleware, async (req, res) => {
   try {
-    const { templateId, organizationId, filters, personType } = req.body;
+    const { templateId, organizationId, studentId, personType, filters } = req.body;
 
-    if (!templateId || !organizationId) {
-      return res.status(400).json({ success: false, error: 'Template ID and Organization ID required' });
+    console.log('🔍 Preview validation request:', { templateId, organizationId, studentId, personType });
+
+    // Validate required fields
+    if (!templateId) {
+      return res.status(400).json({ success: false, error: 'Template ID is required' });
     }
 
     const template = await Template.findById(templateId);
@@ -562,16 +566,69 @@ router.post('/preview-validation', authMiddleware, async (req, res) => {
       return res.status(404).json({ success: false, error: 'Template not found' });
     }
 
-    // Build query for students
-    const query = { schoolId: organizationId, companyId: req.user.companyId, isActive: true };
-    if (personType && personType !== 'all') query.personType = personType;
-    if (filters) {
-      if (filters.class) query['studentDetails.class'] = filters.class;
-      if (filters.level) query['studentDetails.level'] = filters.level;
-      if (filters.academic_year) query['studentDetails.academic_year'] = filters.academic_year;
+    let students = [];
+
+    // Case 1: Single student validation (for single card generation)
+    if (studentId) {
+      const student = await Student.findById(studentId);
+      if (!student) {
+        return res.status(404).json({ success: false, error: 'Student not found' });
+      }
+      students = [student];
+    }
+    // Case 2: Batch validation from database
+    else if (organizationId) {
+      const query = { schoolId: organizationId, companyId: req.user.companyId, isActive: true };
+
+      if (personType && personType !== 'all') {
+        query.personType = personType;
+      }
+
+      if (filters) {
+        if (filters.class && filters.class !== 'all' && filters.class !== '') {
+          query['studentDetails.class'] = filters.class;
+        }
+        if (filters.level && filters.level !== 'all' && filters.level !== '') {
+          query['studentDetails.level'] = filters.level;
+        }
+        if (filters.academic_year && filters.academic_year !== 'all' && filters.academic_year !== '') {
+          query['studentDetails.academic_year'] = filters.academic_year;
+        }
+        if (filters.department && filters.department !== 'all' && filters.department !== '') {
+          query['employeeDetails.department'] = filters.department;
+        }
+        if (filters.position && filters.position !== 'all' && filters.position !== '') {
+          query['employeeDetails.position'] = filters.position;
+        }
+        if (filters.gender && filters.gender !== 'all' && filters.gender !== '') {
+          query.gender = filters.gender;
+        }
+      }
+
+      students = await Student.find(query);
+    }
+    else {
+      return res.status(400).json({
+        success: false,
+        error: 'Either studentId or organizationId is required'
+      });
     }
 
-    const students = await Student.find(query);
+    if (students.length === 0) {
+      return res.json({
+        success: true,
+        totalStudents: 0,
+        validCount: 0,
+        skippedCount: 0,
+        validationResults: [],
+        templateFields: template.fields.map(f => ({
+          name: f.name,
+          label: f.label,
+          type: f.type,
+          requirement: f.requirement
+        }))
+      });
+    }
 
     const validationResults = [];
     let validCount = 0;
@@ -614,6 +671,8 @@ router.post('/preview-validation', authMiddleware, async (req, res) => {
     res.status(500).json({ success: false, error: error.message });
   }
 });
+
+
 
 // ==================== UPDATE TEMPLATE FIELDS ENDPOINT ====================
 router.put('/template/:templateId/fields', authMiddleware, async (req, res) => {
@@ -668,9 +727,10 @@ router.put('/template/:templateId/fields', authMiddleware, async (req, res) => {
   }
 });
 
+
 // ==================== SINGLE CARD GENERATION ====================
 router.post('/generate-single-card', authMiddleware, async (req, res) => {
-  const startTime = Date.now(); // ✅ DECLARE startTime HERE
+  const startTime = Date.now();
   let student = null;
   let template = null;
 
@@ -683,7 +743,6 @@ router.post('/generate-single-card', authMiddleware, async (req, res) => {
       return res.status(400).json({ success: false, error: 'Student ID and Template ID are required' });
     }
 
-    // Verify user is authenticated
     if (!req.user || !req.user.id) {
       return res.status(401).json({ success: false, error: 'Authentication required' });
     }
@@ -700,22 +759,16 @@ router.post('/generate-single-card', authMiddleware, async (req, res) => {
 
     // Check permissions
     if (req.user.role !== 'super_admin' && student.companyId?.toString() !== req.user.companyId?.toString()) {
-      return res.status(403).json({ success: false, error: 'Access denied - Student belongs to different company' });
+      return res.status(403).json({ success: false, error: 'Access denied' });
     }
 
     // Validate student before generating
     const validation = await validateStudentForTemplate(student, template);
     if (!validation.isValid) {
-      // Save failed attempt to history
       await saveCardHistory(
-        student,
-        template,
-        'single',
-        null,
-        'failed',
+        student, template, 'single', null, 'failed',
         `Missing fields: ${validation.missingFields.map(f => f.fieldLabel).join(', ')}`,
-        Date.now() - startTime,
-        req.user.id
+        Date.now() - startTime, req.user.id
       );
 
       return res.status(400).json({
@@ -727,7 +780,6 @@ router.post('/generate-single-card', authMiddleware, async (req, res) => {
 
     // Get photo URL safely
     const photoUrl = getPhotoUrl(student);
-
     const { frontBuffer, backBuffer } = await generateCardWithDynamicFields(student, template, photoUrl);
 
     const zipBuffer = await createZipInMemory([
@@ -742,17 +794,7 @@ router.post('/generate-single-card', authMiddleware, async (req, res) => {
     if (!student.first_card_generated) student.first_card_generated = new Date();
     await student.save();
 
-    // ✅ Save successful generation to history
-    await saveCardHistory(
-      student,
-      template,
-      'single',
-      null,
-      'success',
-      null,
-      Date.now() - startTime,
-      req.user.id
-    );
+    await saveCardHistory(student, template, 'single', null, 'success', null, Date.now() - startTime, req.user.id);
 
     res.set({
       'Content-Type': 'application/zip',
@@ -765,19 +807,9 @@ router.post('/generate-single-card', authMiddleware, async (req, res) => {
   } catch (error) {
     console.error('Single card generation error:', error);
 
-    // Save failed attempt to history if we have student and template
     if (student && template) {
       try {
-        await saveCardHistory(
-          student,
-          template,
-          'single',
-          null,
-          'failed',
-          error.message,
-          Date.now() - startTime,
-          req.user?.id
-        );
+        await saveCardHistory(student, template, 'single', null, 'failed', error.message, Date.now() - startTime, req.user?.id);
       } catch (historyError) {
         console.error('Failed to save error history:', historyError);
       }
@@ -873,7 +905,8 @@ router.get('/organization/:orgId/students', authMiddleware, async (req, res) => 
   }
 });
 
-// ==================== BATCH PROCESSING (CSV/UPLOAD) ====================
+
+// ==================== CSV BATCH PROCESSING - USING YOUR CSV PARSER ====================
 router.post('/process-csv-generate',
   authMiddleware,
   upload.fields([{ name: 'csv', maxCount: 1 }, { name: 'photoZip', maxCount: 1 }]),
@@ -881,31 +914,84 @@ router.post('/process-csv-generate',
     const startTime = Date.now();
 
     try {
+      // 1. VALIDATION
       if (!req.user || !req.user.id) {
         return res.status(401).json({ success: false, error: 'Authentication required' });
       }
 
-      if (!req.files?.csv) return res.status(400).json({ success: false, error: 'CSV file is required' });
-      if (!req.body.templateId) return res.status(400).json({ success: false, error: 'Template ID is required' });
-      if (!req.body.organizationId) return res.status(400).json({ success: false, error: 'Organization ID is required' });
+      if (!req.files?.csv) {
+        return res.status(400).json({ success: false, error: 'CSV file is required' });
+      }
+      if (!req.body.templateId) {
+        return res.status(400).json({ success: false, error: 'Template ID is required' });
+      }
+      if (!req.body.organizationId) {
+        return res.status(400).json({ success: false, error: 'Organization ID is required' });
+      }
 
       const organizationId = req.body.organizationId;
-      const batchId = `batch-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const batchId = req.body.batchId || `batch-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
-      // Verify organization
+      console.log('📦 CSV Batch request:', { organizationId, templateId: req.body.templateId, batchId });
+
+      // 2. INITIAL PROGRESS
+      progressStore.set(batchId, {
+        batchId,
+        status: 'processing',
+        total: 0,
+        processed: 0,
+        generated: 0,
+        failed: 0,
+        skipped: 0,
+        percentage: 0,
+        message: 'Initializing...',
+        currentStudent: null,
+        failedStudents: [],
+        skippedStudents: []
+      });
+
+      // 3. VERIFY ORGANIZATION & TEMPLATE
       const org = await School.findOne({ _id: organizationId, companyId: req.user.companyId });
-      if (!org) return res.status(404).json({ success: false, error: 'Organization not found' });
+      if (!org) {
+        progressStore.delete(batchId);
+        return res.status(404).json({ success: false, error: 'Organization not found' });
+      }
 
       const template = await Template.findById(req.body.templateId);
-      if (!template) return res.status(404).json({ success: false, error: 'Template not found' });
+      if (!template) {
+        progressStore.delete(batchId);
+        return res.status(404).json({ success: false, error: 'Template not found' });
+      }
 
-      // Parse CSV
-      const students = await parseCSVFromBuffer(req.files.csv[0].buffer);
-      console.log(`📊 Parsed ${students.length} records from CSV`);
+      // 4. PARSE CSV USING YOUR EXISTING PARSER
+      progressStore.set(batchId, {
+        ...progressStore.get(batchId),
+        message: 'Parsing CSV file...'
+      });
 
-      // Extract photos from ZIP
+      let csvStudents = [];
+      try {
+        csvStudents = await parseCSVFromBuffer(req.files.csv[0].buffer);
+        console.log(`📊 Parsed ${csvStudents.length} records from CSV`);
+      } catch (parseError) {
+        console.error('CSV parsing error:', parseError);
+        progressStore.delete(batchId);
+        return res.status(400).json({ success: false, error: `CSV parsing failed: ${parseError.message}` });
+      }
+
+      if (csvStudents.length === 0) {
+        progressStore.delete(batchId);
+        return res.status(400).json({ success: false, error: 'No valid records found in CSV' });
+      }
+
+      // 5. EXTRACT PHOTOS FROM ZIP
       let photoCloudinaryMap = {};
       if (req.files.photoZip?.[0]) {
+        progressStore.set(batchId, {
+          ...progressStore.get(batchId),
+          message: `Processing ZIP file with photos...`
+        });
+
         try {
           photoCloudinaryMap = await extractAndUploadPhotosToCloudinary(req.files.photoZip[0].buffer);
           console.log(`✅ Uploaded ${Object.keys(photoCloudinaryMap).length} photos`);
@@ -914,90 +1000,191 @@ router.post('/process-csv-generate',
         }
       }
 
-      // Save students to database
+      // 6. SAVE OR UPDATE STUDENTS (with progress tracking)
+      progressStore.set(batchId, {
+        ...progressStore.get(batchId),
+        message: `Saving ${csvStudents.length} students to database...`,
+        total: csvStudents.length
+      });
+
       const savedStudents = [];
-      for (const studentData of students) {
+      const saveErrors = [];
+
+      for (let i = 0; i < csvStudents.length; i++) {
+        const studentData = csvStudents[i];
+
+        // Update progress every 10 students
+        if (i % 10 === 0 && i > 0) {
+          progressStore.set(batchId, {
+            ...progressStore.get(batchId),
+            message: `Saving students: ${i}/${csvStudents.length}...`,
+            processed: i
+          });
+        }
+
         try {
-          const existingStudent = await Student.findOne({
-            student_id: studentData.student_id,
-            schoolId: organizationId
+          // Determine the ID field based on person type
+          const personId = studentData.personType === 'student'
+            ? studentData.student_id
+            : studentData.employeeDetails?.employeeId;
+
+          if (!personId) {
+            saveErrors.push({
+              name: studentData.name,
+              id: 'N/A',
+              reason: 'Missing ID field'
+            });
+            continue;
+          }
+
+          // Check if person exists
+          const existingPerson = await Student.findOne({
+            $or: [
+              { student_id: personId, schoolId: organizationId },
+              { 'employeeDetails.employeeId': personId, schoolId: organizationId }
+            ]
           });
 
-          const cloudinaryPhoto = photoCloudinaryMap[studentData.student_id];
+          const cloudinaryPhoto = photoCloudinaryMap[personId];
 
-          if (existingStudent) {
-            Object.assign(existingStudent, studentData);
-            if (cloudinaryPhoto) {
-              existingStudent.photo_url = cloudinaryPhoto.secure_url;
-              existingStudent.photo_public_id = cloudinaryPhoto.public_id;
-              existingStudent.has_photo = true;
+          if (existingPerson) {
+            // Update existing person
+            existingPerson.name = studentData.name;
+            existingPerson.gender = studentData.gender || existingPerson.gender;
+            existingPerson.residence = studentData.residence || existingPerson.residence;
+
+            if (studentData.personType === 'student') {
+              existingPerson.studentDetails = {
+                ...existingPerson.studentDetails,
+                class: studentData.studentDetails?.class || existingPerson.studentDetails?.class,
+                level: studentData.studentDetails?.level || existingPerson.studentDetails?.level,
+                academic_year: studentData.studentDetails?.academic_year || existingPerson.studentDetails?.academic_year,
+                parent_phone: studentData.studentDetails?.parent_phone || existingPerson.studentDetails?.parent_phone
+              };
+            } else {
+              existingPerson.employeeDetails = {
+                ...existingPerson.employeeDetails,
+                department: studentData.employeeDetails?.department || existingPerson.employeeDetails?.department,
+                position: studentData.employeeDetails?.position || existingPerson.employeeDetails?.position,
+                workPhone: studentData.employeeDetails?.workPhone || existingPerson.employeeDetails?.workPhone
+              };
             }
-            await existingStudent.save();
-            savedStudents.push(existingStudent);
+
+            if (cloudinaryPhoto) {
+              existingPerson.photo_url = cloudinaryPhoto.secure_url;
+              existingPerson.photo_public_id = cloudinaryPhoto.public_id;
+              existingPerson.has_photo = true;
+            }
+
+            await existingPerson.save();
+            savedStudents.push(existingPerson);
           } else {
-            const student = new Student({
-              ...studentData,
+            // Create new person
+            const newPersonData = {
+              name: studentData.name,
               schoolId: organizationId,
               companyId: req.user.companyId,
+              personType: studentData.personType,
+              gender: studentData.gender || '',
+              residence: studentData.residence || '',
               photo_url: cloudinaryPhoto?.secure_url,
               photo_public_id: cloudinaryPhoto?.public_id,
               has_photo: !!cloudinaryPhoto
-            });
-            await student.save();
-            savedStudents.push(student);
+            };
+
+            if (studentData.personType === 'student') {
+              newPersonData.student_id = studentData.student_id;
+              newPersonData.studentDetails = studentData.studentDetails || {};
+            } else {
+              newPersonData.employeeDetails = studentData.employeeDetails || {};
+            }
+
+            const newPerson = new Student(newPersonData);
+            await newPerson.save();
+            savedStudents.push(newPerson);
           }
         } catch (error) {
-          console.error(`Failed to save student ${studentData.student_id}:`, error.message);
+          console.error(`Failed to save person:`, error.message);
+          saveErrors.push({
+            name: studentData.name,
+            id: studentData.student_id || studentData.employeeDetails?.employeeId,
+            reason: `Database error: ${error.message}`
+          });
         }
       }
 
-      // Filter valid students
+      console.log(`✅ Saved ${savedStudents.length} students, ${saveErrors.length} errors`);
+
+      // 7. VALIDATE STUDENTS AGAINST TEMPLATE (SAME LOGIC AS batch-from-db)
+      progressStore.set(batchId, {
+        ...progressStore.get(batchId),
+        message: `Validating ${savedStudents.length} students against template...`
+      });
+
       const validStudents = [];
-      const skippedStudentsList = [];
+      const skippedStudents = [...saveErrors];
 
       for (const student of savedStudents) {
         const validation = await validateStudentForTemplate(student, template);
         if (validation.isValid) {
           validStudents.push(student);
         } else {
-          skippedStudentsList.push({
+          skippedStudents.push({
             name: student.name,
-            id: student.student_id,
-            reason: `Missing: ${validation.missingFields.map(f => f.fieldLabel).join(', ')}`
+            id: student.student_id || student.employeeDetails?.employeeId,
+            reason: `Missing required fields: ${validation.missingFields.map(f => f.fieldLabel).join(', ')}`
           });
         }
       }
 
+      console.log(`✅ Valid: ${validStudents.length}, Skipped: ${skippedStudents.length}`);
+
       if (validStudents.length === 0) {
-        return res.status(400).json({
-          success: false,
-          error: 'No valid students for this template',
-          skipped: skippedStudentsList
+        const finalProgress = {
+          batchId,
+          status: 'completed',
+          total: savedStudents.length,
+          processed: savedStudents.length,
+          generated: 0,
+          failed: 0,
+          skipped: skippedStudents.length,
+          percentage: 100,
+          failedStudents: [],
+          skippedStudents: skippedStudents,
+          message: `No valid students found. ${skippedStudents.length} students skipped.`
+        };
+        progressStore.set(batchId, finalProgress);
+
+        res.setHeader('X-Batch-Id', batchId);
+        res.set({
+          'Content-Type': 'application/zip',
+          'Content-Disposition': `attachment; filename="batch-cards-${Date.now()}.zip"`
         });
+
+        const archive = archiver('zip', { zlib: { level: 9 } });
+        archive.pipe(res);
+        archive.finalize();
+
+        setTimeout(() => progressStore.delete(batchId), 3600000);
+        return;
       }
 
-      // Store progress
+      // 8. SETUP FOR CARD GENERATION
       progressStore.set(batchId, {
         batchId,
-        status: 'processing',
+        status: 'generating',
         total: validStudents.length,
         processed: 0,
         generated: 0,
         failed: 0,
-        skipped: skippedStudentsList.length,
+        skipped: skippedStudents.length,
+        percentage: 0,
         failedStudents: [],
-        skippedStudents: skippedStudentsList
+        skippedStudents: skippedStudents,
+        message: `Starting generation for ${validStudents.length} students...`
       });
 
-      // ✅ EMIT BATCH STARTED with correct total
-      socketService.emit('card:batch-started', {
-        batchId,
-        total: validStudents.length,
-        message: `Starting batch generation for ${validStudents.length} students`,
-        userId: req.user.id
-      });
-
-      // Set response headers
+      // Set response headers for streaming ZIP
       res.setHeader('X-Batch-Id', batchId);
       res.set({
         'Content-Type': 'application/zip',
@@ -1011,39 +1198,48 @@ router.post('/process-csv-generate',
       let failedCount = 0;
       const failedStudents = [];
 
+      // 9. GENERATE CARDS (SAME LOOP AS batch-from-db)
       for (let i = 0; i < validStudents.length; i++) {
         const currentStudent = validStudents[i];
         const currentIndex = i + 1;
         const percentage = Math.round((currentIndex / validStudents.length) * 100);
 
-        // ✅ EMIT PROGRESS EVENT
-        socketService.emit('card:batch-progress', {
+        // Update progress
+        const currentProgress = {
           batchId,
-          type: 'progress',
-          percentage,
+          status: 'generating',
+          total: validStudents.length,
           processed: currentIndex,
           generated: generatedCount,
           failed: failedCount,
-          skipped: skippedStudentsList.length,
-          total: validStudents.length,
+          skipped: skippedStudents.length,
+          percentage: percentage,
           currentStudent: {
             name: currentStudent.name,
-            id: currentStudent.student_id,
-            status: 'generating',
+            id: currentStudent.student_id || currentStudent.employeeDetails?.employeeId,
             index: currentIndex,
-            total: validStudents.length
+            total: validStudents.length,
+            status: 'generating'
           },
-          message: `Generating card for ${currentStudent.name}...`,
-          userId: req.user.id
-        });
+          failedStudents: failedStudents,
+          skippedStudents: skippedStudents,
+          message: `Generating card ${currentIndex} of ${validStudents.length}: ${currentStudent.name}`
+        };
+
+        progressStore.set(batchId, currentProgress);
+        console.log(`📊 Progress: ${percentage}% - ${currentStudent.name}`);
 
         try {
           const photoUrl = getPhotoUrl(currentStudent);
           const { frontBuffer, backBuffer } = await generateCardWithDynamicFields(currentStudent, template, photoUrl);
 
-          archive.append(frontBuffer, { name: `${currentStudent.student_id}/front-side.png` });
-          if (backBuffer) archive.append(backBuffer, { name: `${currentStudent.student_id}/back-side.png` });
+          const folderName = currentStudent.student_id || currentStudent.employeeDetails?.employeeId || currentStudent._id;
+          archive.append(frontBuffer, { name: `${folderName}/front-side.png` });
+          if (backBuffer) {
+            archive.append(backBuffer, { name: `${folderName}/back-side.png` });
+          }
 
+          // Update student record
           currentStudent.card_generated = true;
           currentStudent.card_generation_count = (currentStudent.card_generation_count || 0) + 1;
           currentStudent.last_card_generated = new Date();
@@ -1058,57 +1254,41 @@ router.post('/process-csv-generate',
           failedCount++;
           failedStudents.push({
             name: currentStudent.name,
-            id: currentStudent.student_id,
+            id: currentStudent.student_id || currentStudent.employeeDetails?.employeeId,
             reason: error.message
           });
 
           await saveCardHistory(currentStudent, template, 'batch', batchId, 'failed', error.message, Date.now() - startTime, req.user.id);
-
-          // ✅ EMIT FAILED EVENT
-          socketService.emit('card:batch-progress', {
-            batchId,
-            type: 'failed',
-            percentage,
-            processed: currentIndex,
-            generated: generatedCount,
-            failed: failedCount,
-            skipped: skippedStudentsList.length,
-            total: validStudents.length,
-            currentStudent: {
-              name: currentStudent.name,
-              id: currentStudent.student_id,
-              status: 'failed',
-              error: error.message,
-              index: currentIndex,
-              total: validStudents.length
-            },
-            userId: req.user.id
-          });
         }
       }
 
-      // ✅ EMIT BATCH COMPLETE
-      socketService.emit('card:batch-complete', {
+      // 10. FINAL PROGRESS
+      const finalProgress = {
         batchId,
-        stats: {
-          total: validStudents.length,
-          generated: generatedCount,
-          failed: failedCount,
-          skipped: skippedStudentsList.length
-        },
-        failedStudents,
-        skippedStudents: skippedStudentsList,
-        message: `✅ Batch complete! Generated ${generatedCount} of ${validStudents.length} cards. Skipped: ${skippedStudentsList.length}, Failed: ${failedCount}`,
-        userId: req.user.id
-      });
+        status: 'completed',
+        total: validStudents.length,
+        processed: validStudents.length,
+        generated: generatedCount,
+        failed: failedCount,
+        skipped: skippedStudents.length,
+        percentage: 100,
+        failedStudents: failedStudents,
+        skippedStudents: skippedStudents,
+        message: `✅ Complete! Generated ${generatedCount} of ${validStudents.length} cards. Failed: ${failedCount}, Skipped: ${skippedStudents.length}`
+      };
+
+      progressStore.set(batchId, finalProgress);
+      console.log(`✅ CSV Batch ${batchId} complete: ${generatedCount} generated, ${failedCount} failed, ${skippedStudents.length} skipped`);
 
       await archive.finalize();
-      console.log(`✅ Batch ${batchId} complete: ${generatedCount} generated, ${failedCount} failed, ${skippedStudentsList.length} skipped`);
 
-      setTimeout(() => progressStore.delete(batchId), 3600000);
+      // Clean up after 1 hour
+      setTimeout(() => {
+        progressStore.delete(batchId);
+      }, 3600000);
 
     } catch (error) {
-      console.error('Batch processing error:', error);
+      console.error('CSV Batch processing error:', error);
       if (!res.headersSent) {
         res.status(500).json({ success: false, error: error.message });
       }
@@ -1116,14 +1296,15 @@ router.post('/process-csv-generate',
   }
 );
 
-// ==================== BATCH GENERATION FROM DATABASE ====================
+
+// ==================== BATCH GENERATION FROM DATABASE - FIXED ====================
 router.post('/generate-batch-from-db', authMiddleware, async (req, res) => {
   const startTime = Date.now();
 
   try {
-    const { templateId, filters, organizationId, personType } = req.body;
+    const { templateId, filters, organizationId, personType, batchId: frontendBatchId } = req.body;
 
-    console.log('📦 Batch from DB request:', { templateId, filters, organizationId, personType });
+    console.log('📦 Batch from DB request:', { templateId, organizationId, personType, frontendBatchId });
 
     if (!templateId) {
       return res.status(400).json({ success: false, error: 'Template ID is required' });
@@ -1159,8 +1340,10 @@ router.post('/generate-batch-from-db', authMiddleware, async (req, res) => {
       return res.status(404).json({ success: false, error: 'Template not found' });
     }
 
-    // Generate a unique batch ID
-    const batchId = `batch-db-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    // USE THE FRONTEND BATCH ID - DON'T GENERATE A NEW ONE
+    const batchId = frontendBatchId || `batch-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+    console.log('✅ Using batch ID:', batchId);
 
     // Store progress in memory
     progressStore.set(batchId, {
@@ -1171,15 +1354,14 @@ router.post('/generate-batch-from-db', authMiddleware, async (req, res) => {
       generated: 0,
       failed: 0,
       skipped: 0,
+      percentage: 0,
       failedStudents: [],
       skippedStudents: [],
       startTime: Date.now()
     });
 
-    // Send batch ID immediately so frontend can subscribe
-    res.setHeader('X-Batch-Id', batchId);
-
     // Set response headers for streaming ZIP
+    res.setHeader('X-Batch-Id', batchId);
     res.set({
       'Content-Type': 'application/zip',
       'Content-Disposition': `attachment; filename="batch-cards-${Date.now()}.zip"`
@@ -1194,25 +1376,24 @@ router.post('/generate-batch-from-db', authMiddleware, async (req, res) => {
     const failedStudents = [];
     const skippedStudents = [];
 
-    // Emit batch started event
-    socketService.emit('card:batch-started', {
-      batchId,
-      total: students.length,
-      message: `Starting batch generation for ${students.length} students`,
-      userId: req.user.id
-    });
-
     for (let i = 0; i < students.length; i++) {
       const rawStudent = students[i];
+      const currentIndex = i + 1;
+      const percentage = Math.round((currentIndex / students.length) * 100);
 
       // Update progress store
       const progress = progressStore.get(batchId);
       if (progress) {
-        progress.processed = i + 1;
+        progress.processed = currentIndex;
         progress.generated = generatedCount;
         progress.failed = failedCount;
         progress.skipped = skippedCount;
-        progress.percentage = Math.round(((i + 1) / students.length) * 100);
+        progress.percentage = percentage;
+        progress.currentStudent = {
+          name: rawStudent.name,
+          id: rawStudent.student_id || rawStudent.employeeDetails?.employeeId
+        };
+        progressStore.set(batchId, progress);
       }
 
       // Validate student before generating
@@ -1223,131 +1404,52 @@ router.post('/generate-batch-from-db', authMiddleware, async (req, res) => {
         skippedCount++;
         skippedStudents.push({
           name: rawStudent.name,
-          id: rawStudent.student_id,
-          reason: errorMsg,
-          missingFields: validation.missingFields.map(f => f.fieldLabel)
-        });
-
-        // Emit skip event
-        socketService.emit('card:batch-progress', {
-          batchId,
-          type: 'skipped',
-          percentage: Math.round(((i + 1) / students.length) * 100),
-          processed: i + 1,
-          generated: generatedCount,
-          failed: failedCount,
-          skipped: skippedCount,
-          total: students.length,
-          currentStudent: {
-            name: rawStudent.name,
-            id: rawStudent.student_id,
-            status: 'skipped',
-            error: errorMsg,
-            index: i + 1,
-            total: students.length
-          },
-          userId: req.user.id
+          id: rawStudent.student_id || rawStudent.employeeDetails?.employeeId,
+          reason: errorMsg
         });
         continue;
       }
 
-      // Create a sanitized copy with proper photo_url
-      const student = {
-        ...rawStudent.toObject(),
-        photo_url: getPhotoUrl(rawStudent)
-      };
-
-      // Emit progress update for current student
-      socketService.emit('card:batch-progress', {
-        batchId,
-        type: 'progress',
-        percentage: Math.round(((i + 1) / students.length) * 100),
-        processed: i + 1,
-        generated: generatedCount,
-        failed: failedCount,
-        skipped: skippedCount,
-        total: students.length,
-        currentStudent: {
-          name: student.name,
-          id: student.student_id,
-          status: 'generating',
-          index: i + 1,
-          total: students.length
-        },
-        message: `Generating card for ${student.name}...`,
-        userId: req.user.id
-      });
-
       try {
+        const student = {
+          ...rawStudent.toObject(),
+          photo_url: getPhotoUrl(rawStudent)
+        };
+
         const { frontBuffer, backBuffer } = await generateCardWithDynamicFields(
           student, template, student.photo_url
         );
 
-        archive.append(frontBuffer, { name: `${student.student_id}/front-side.png` });
+        const folderName = student.student_id || student.employeeDetails?.employeeId || student._id;
+        archive.append(frontBuffer, { name: `${folderName}/front-side.png` });
         if (backBuffer) {
-          archive.append(backBuffer, { name: `${student.student_id}/back-side.png` });
+          archive.append(backBuffer, { name: `${folderName}/back-side.png` });
         }
 
-        // Update the original document
         rawStudent.card_generated = true;
         rawStudent.card_generation_count = (rawStudent.card_generation_count || 0) + 1;
         rawStudent.last_card_generated = new Date();
         if (!rawStudent.first_card_generated) rawStudent.first_card_generated = new Date();
         await rawStudent.save();
 
-        // Save successful generation to history
-        await saveCardHistory(
-          rawStudent,
-          template,
-          'batch',
-          batchId,
-          'success',
-          null,
-          Date.now() - startTime,
-          req.user.id
-        );
-
+        await saveCardHistory(rawStudent, template, 'batch', batchId, 'success', null, Date.now() - startTime, req.user.id);
         generatedCount++;
 
       } catch (error) {
-        console.error(`Failed for ${student.name}:`, error.message);
+        console.error(`Failed for ${rawStudent.name}:`, error.message);
         failedCount++;
         failedStudents.push({
-          name: student.name,
-          id: student.student_id,
+          name: rawStudent.name,
+          id: rawStudent.student_id || rawStudent.employeeDetails?.employeeId,
           reason: error.message
         });
 
-        // Save failed generation to history
-        await saveCardHistory(
-          rawStudent,
-          template,
-          'batch',
-          batchId,
-          'failed',
-          error.message,
-          Date.now() - startTime,
-          req.user.id
-        );
-
-        socketService.emit('card:batch-progress', {
-          batchId,
-          type: 'failed',
-          currentStudent: {
-            name: student.name,
-            id: student.student_id,
-            status: 'failed',
-            error: error.message,
-            index: i + 1,
-            total: students.length
-          },
-          userId: req.user.id
-        });
+        await saveCardHistory(rawStudent, template, 'batch', batchId, 'failed', error.message, Date.now() - startTime, req.user.id);
       }
     }
 
     // Update final progress
-    const finalProgress = {
+    progressStore.set(batchId, {
       batchId,
       status: 'completed',
       total: students.length,
@@ -1355,36 +1457,15 @@ router.post('/generate-batch-from-db', authMiddleware, async (req, res) => {
       generated: generatedCount,
       failed: failedCount,
       skipped: skippedCount,
+      percentage: 100,
       failedStudents: failedStudents,
-      skippedStudents: skippedStudents,
-      percentage: 100
-    };
-    progressStore.set(batchId, finalProgress);
-
-    // Emit completion event
-    socketService.emit('card:batch-complete', {
-      batchId,
-      stats: {
-        total: students.length,
-        generated: generatedCount,
-        failed: failedCount,
-        skipped: skippedCount
-      },
-      failedStudents: failedStudents,
-      skippedStudents: skippedStudents,
-      message: `Batch complete! Generated ${generatedCount} of ${students.length} cards. Skipped: ${skippedCount}, Failed: ${failedCount}`,
-      userId: req.user.id
+      skippedStudents: skippedStudents
     });
 
-    // Finalize the archive
     await archive.finalize();
-
     console.log(`✅ Batch ${batchId} complete: ${generatedCount} generated, ${failedCount} failed, ${skippedCount} skipped`);
 
-    // Clean up progress store after 1 hour
-    setTimeout(() => {
-      progressStore.delete(batchId);
-    }, 3600000);
+    setTimeout(() => progressStore.delete(batchId), 3600000);
 
   } catch (error) {
     console.error('Batch from DB error:', error);
@@ -1394,12 +1475,63 @@ router.post('/generate-batch-from-db', authMiddleware, async (req, res) => {
   }
 });
 
+// ==================== BATCH PROGRESS ENDPOINT - FIXED ====================
+router.get('/batch-progress/:batchId', authMiddleware, async (req, res) => {
+  try {
+    const { batchId } = req.params;
+
+    console.log('📊 Getting batch progress for:', batchId);
+
+    const progress = progressStore.get(batchId);
+
+    if (!progress) {
+      return res.status(404).json({
+        success: false,
+        error: 'Batch not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      progress: {
+        batchId: progress.batchId,
+        status: progress.status,
+        total: progress.total,
+        processed: progress.processed || 0,
+        generated: progress.generated || 0,
+        failed: progress.failed || 0,
+        skipped: progress.skipped || 0,
+        percentage: progress.percentage || 0,
+        message: progress.message,
+        currentStudent: progress.currentStudent,
+        failedStudents: progress.failedStudents || [],
+        skippedStudents: progress.skippedStudents || []
+      }
+    });
+  } catch (error) {
+    console.error('Get batch progress error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // ==================== TEMPLATE DIMENSIONS ====================
 router.get('/template-dimensions/:templateId', async (req, res) => {
   try {
     const { templateId } = req.params;
+
+    // Add validation
+    if (!templateId) {
+      return res.status(400).json({ success: false, error: 'Template ID is required' });
+    }
+
     const template = await Template.findById(templateId);
-    if (!template) return res.status(404).json({ success: false, error: 'Template not found' });
+    if (!template) {
+      return res.status(404).json({ success: false, error: 'Template not found' });
+    }
+
+    if (!template.frontSide?.secure_url) {
+      return res.status(400).json({ success: false, error: 'Template has no image' });
+    }
 
     const templateImage = await loadImageFromUrl(template.frontSide.secure_url);
     const originalDimensions = { width: templateImage.width, height: templateImage.height };
@@ -1413,7 +1545,11 @@ router.get('/template-dimensions/:templateId', async (req, res) => {
       dimensions: {
         original: originalDimensions,
         scaled: { width: TARGET_WIDTH, height: scaledHeight, scaleFactor: scaleFactor.toFixed(4) },
-        preview: { width: 800, height: Math.round((800 * originalDimensions.height) / originalDimensions.width), scaleFactor: (800 / originalDimensions.width).toFixed(4) }
+        preview: {
+          width: 800,
+          height: Math.round((800 * originalDimensions.height) / originalDimensions.width),
+          scaleFactor: (800 / originalDimensions.width).toFixed(4)
+        }
       }
     });
 
@@ -1423,38 +1559,149 @@ router.get('/template-dimensions/:templateId', async (req, res) => {
   }
 });
 
-// ==================== STUDENT PHOTO UPLOAD ====================
-router.post('/upload-student-photo', upload.single('photo'), async (req, res) => {
+// ==================== STUDENT PHOTO UPLOAD - FIXED FOR CO-WORKERS ====================
+router.post('/upload-student-photo', authMiddleware, upload.single('photo'), async (req, res) => {
   try {
     const { studentId } = req.body;
-    if (!studentId || !req.file) return res.status(400).json({ success: false, error: 'Student ID and photo are required' });
+
+    console.log('📸 Photo upload request:', { studentId, userId: req.user?.id, role: req.user?.role });
+
+    if (!studentId || !req.file) {
+      return res.status(400).json({ success: false, error: 'Student ID and photo are required' });
+    }
 
     const student = await Student.findById(studentId);
-    if (!student) return res.status(404).json({ success: false, error: 'Student not found' });
+    if (!student) {
+      return res.status(404).json({ success: false, error: 'Student not found' });
+    }
 
-    if (req.user.role !== 'super_admin' && student.companyId?.toString() !== req.user.companyId?.toString()) {
+    // ==================== PERMISSION CHECKS ====================
+
+    // SUPER ADMIN - can upload any photo
+    if (req.user.role === 'super_admin') {
+      // Allow
+    }
+    // ADMIN - can upload photos for their company's students
+    else if (req.user.role === 'admin') {
+      if (student.companyId?.toString() !== req.user.companyId?.toString()) {
+        return res.status(403).json({
+          success: false,
+          error: 'Access denied - Student belongs to different company'
+        });
+      }
+    }
+    // CO_WORKER - can upload photos only for organizations they have permission for
+    else if (req.user.role === 'co_worker') {
+      const hasPermission = req.user.permissions?.some(
+        p => p.organizationId?.toString() === student.schoolId?.toString() &&
+          p.canUploadPhotos === true
+      );
+
+      console.log('🔍 Co-worker permission check:', {
+        schoolId: student.schoolId?.toString(),
+        hasPermission,
+        permissions: req.user.permissions?.map(p => ({ orgId: p.organizationId, canUpload: p.canUploadPhotos }))
+      });
+
+      if (!hasPermission) {
+        return res.status(403).json({
+          success: false,
+          error: 'You do not have permission to upload photos for this organization'
+        });
+      }
+    }
+    else {
       return res.status(403).json({ success: false, error: 'Access denied' });
     }
 
-    const uploadResult = await cloudinary.uploader.upload(`data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`, {
+    // Delete old photo if exists
+    if (student.photo_public_id) {
+      try {
+        await cloudinary.uploader.destroy(student.photo_public_id);
+        console.log('🗑️ Deleted old photo:', student.photo_public_id);
+      } catch (e) {
+        console.warn('Could not delete old photo:', e.message);
+      }
+    }
+
+    // Upload new photo
+    const base64Image = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
+    const uploadResult = await cloudinary.uploader.upload(base64Image, {
       folder: 'card-agent/people/photos',
-      public_id: `student-${student.student_id}-${Date.now()}`,
+      public_id: `student-${student.student_id || student._id}-${Date.now()}`,
       overwrite: true,
-      transformation: [{ width: 500, height: 500, crop: "fill" }, { quality: "auto:good" }]
+      transformation: [
+        { width: 500, height: 500, crop: "fill", gravity: "face" },
+        { quality: "auto:good" }
+      ]
     });
 
+    console.log('✅ Photo uploaded to Cloudinary:', uploadResult.secure_url);
+
+    // Update student
     student.photo_url = uploadResult.secure_url;
     student.photo_public_id = uploadResult.public_id;
     student.has_photo = true;
     student.photo_uploaded_at = new Date();
+    student.photo_metadata = {
+      width: uploadResult.width,
+      height: uploadResult.height,
+      format: uploadResult.format,
+      bytes: uploadResult.bytes
+    };
+
     await student.save();
 
-    res.json({ success: true, message: 'Photo uploaded successfully', photo_url: uploadResult.secure_url });
+    // Also update the student in the database with the new photo URL
+    await Student.findByIdAndUpdate(studentId, {
+      photo_url: uploadResult.secure_url,
+      photo_public_id: uploadResult.public_id,
+      has_photo: true,
+      photo_uploaded_at: new Date()
+    });
+
+    res.json({
+      success: true,
+      message: 'Photo uploaded successfully',
+      photo_url: uploadResult.secure_url,
+      student: {
+        _id: student._id,
+        name: student.name,
+        has_photo: true
+      }
+    });
 
   } catch (error) {
-    console.error('Photo upload error:', error);
+    console.error('❌ Photo upload error:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
+
+
+
+// ==================== LIST ALL ACTIVE BATCHES (optional, for debugging) ====================
+router.get('/active-batches', authMiddleware, async (req, res) => {
+  try {
+    const activeBatches = Array.from(progressStore.entries()).map(([id, data]) => ({
+      batchId: id,
+      status: data.status,
+      total: data.total,
+      processed: data.processed,
+      generated: data.generated,
+      failed: data.failed,
+      skipped: data.skipped,
+      percentage: data.percentage
+    }));
+
+    res.json({
+      success: true,
+      batches: activeBatches
+    });
+  } catch (error) {
+    console.error('Get active batches error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 
 module.exports = router;
