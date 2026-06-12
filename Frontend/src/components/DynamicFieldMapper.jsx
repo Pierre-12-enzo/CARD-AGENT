@@ -104,19 +104,19 @@ const DynamicFieldMapper = ({ template, students, onSave, onBack, initialMapping
                 },
                 {
                     name: 'gender', label: 'Gender', type: 'text', requirement: 'required',
-                    position: { x: 580, y: 375, maxWidth: 300, fontSize: 18, isBold: false, textAlign: 'left' },
+                    position: { x: 580, y: 375, maxWidth: 300, fontSize: 20, isBold: false, textAlign: 'left' },
                     dataSource: { sourceType: 'student_field', fieldPath: 'gender' },
                     uniqueId: `gender-${Date.now()}-${Math.random()}`
                 },
                 {
                     name: 'residence', label: 'Residence', type: 'text', requirement: 'required',
-                    position: { x: 620, y: 420, maxWidth: 300, fontSize: 18, isBold: false, textAlign: 'left' },
+                    position: { x: 620, y: 420, maxWidth: 300, fontSize: 20, isBold: false, textAlign: 'left' },
                     dataSource: { sourceType: 'student_field', fieldPath: 'residence' },
                     uniqueId: `residence-${Date.now()}-${Math.random()}`
                 },
                 {
                     name: 'academic_year', label: 'Academic Year', type: 'text', requirement: 'required',
-                    position: { x: 670, y: 472, maxWidth: 300, fontSize: 18, isBold: false, textAlign: 'left' },
+                    position: { x: 670, y: 472, maxWidth: 300, fontSize: 20, isBold: false, textAlign: 'left' },
                     dataSource: { sourceType: 'student_field', fieldPath: 'studentDetails.academic_year' },
                     uniqueId: `academic_year-${Date.now()}-${Math.random()}`
                 }
@@ -156,19 +156,19 @@ const DynamicFieldMapper = ({ template, students, onSave, onBack, initialMapping
                 },
                 {
                     name: 'gender', label: 'Gender', type: 'text', requirement: 'required',
-                    position: { x: 580, y: 375, maxWidth: 300, fontSize: 18, isBold: false, textAlign: 'left' },
+                    position: { x: 580, y: 375, maxWidth: 300, fontSize: 20, isBold: false, textAlign: 'left' },
                     dataSource: { sourceType: 'employee_field', fieldPath: 'gender' },
                     uniqueId: `gender-${Date.now()}-${Math.random()}`
                 },
                 {
                     name: 'residence', label: 'Residence', type: 'text', requirement: 'required',
-                    position: { x: 620, y: 420, maxWidth: 300, fontSize: 18, isBold: false, textAlign: 'left' },
+                    position: { x: 620, y: 420, maxWidth: 300, fontSize: 20, isBold: false, textAlign: 'left' },
                     dataSource: { sourceType: 'employee_field', fieldPath: 'residence' },
                     uniqueId: `residence-${Date.now()}-${Math.random()}`
                 },
                 {
                     name: 'work_phone', label: 'Work Phone', type: 'text', requirement: 'required',
-                    position: { x: 580, y: 420, maxWidth: 300, fontSize: 18, isBold: false, textAlign: 'left' },
+                    position: { x: 580, y: 420, maxWidth: 300, fontSize: 20, isBold: false, textAlign: 'left' },
                     dataSource: { sourceType: 'employee_field', fieldPath: 'employeeDetails.workPhone' },
                     uniqueId: `work_phone-${Date.now()}-${Math.random()}`
                 }
@@ -580,22 +580,88 @@ const DynamicFieldMapper = ({ template, students, onSave, onBack, initialMapping
                                     </div>
                                 )}
 
-                                <div className="grid grid-cols-4 gap-2 mb-3">
+                                <div className="grid grid-cols-6 gap-2 mb-3">
                                     <div>
                                         <label className="text-xs text-slate-500">X</label>
-                                        <input type="number" value={field.position?.x || 0} onChange={(e) => updateField(field.uniqueId, { position: { ...field.position, x: parseInt(e.target.value) || 0 } })} className="w-full px-2 py-1 border rounded text-sm" />
+                                        <input
+                                            type="number"
+                                            value={field.position?.x || 0}
+                                            onChange={(e) => updateField(field.uniqueId, { position: { ...field.position, x: parseInt(e.target.value) || 0 } })}
+                                            className="w-full px-2 py-1 border rounded text-sm"
+                                        />
                                     </div>
                                     <div>
                                         <label className="text-xs text-slate-500">Y</label>
-                                        <input type="number" value={field.position?.y || 0} onChange={(e) => updateField(field.uniqueId, { position: { ...field.position, y: parseInt(e.target.value) || 0 } })} className="w-full px-2 py-1 border rounded text-sm" />
+                                        <input
+                                            type="number"
+                                            value={field.position?.y || 0}
+                                            onChange={(e) => updateField(field.uniqueId, { position: { ...field.position, y: parseInt(e.target.value) || 0 } })}
+                                            className="w-full px-2 py-1 border rounded text-sm"
+                                        />
                                     </div>
                                     <div>
                                         <label className="text-xs text-slate-500">Font Size</label>
-                                        <input type="number" value={field.position?.fontSize || 20} onChange={(e) => updateField(field.uniqueId, { position: { ...field.position, fontSize: parseInt(e.target.value) || 20 } })} className="w-full px-2 py-1 border rounded text-sm" />
+                                        <input
+                                            type="number"
+                                            value={field.position?.fontSize || 20}
+                                            onChange={(e) => updateField(field.uniqueId, { position: { ...field.position, fontSize: parseInt(e.target.value) || 20 } })}
+                                            className="w-full px-2 py-1 border rounded text-sm"
+                                            min="8"
+                                            max="72"
+                                        />
                                     </div>
                                     <div className="flex items-center gap-2 pt-5">
                                         <label className="text-xs text-slate-500">Bold</label>
-                                        <input type="checkbox" checked={field.position?.isBold || false} onChange={(e) => updateField(field.uniqueId, { position: { ...field.position, isBold: e.target.checked } })} className="w-4 h-4" />
+                                        <input
+                                            type="checkbox"
+                                            checked={field.position?.isBold || false}
+                                            onChange={(e) => updateField(field.uniqueId, { position: { ...field.position, isBold: e.target.checked } })}
+                                            className="w-4 h-4"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="text-xs text-slate-500">Font Color</label>
+                                        <div className="flex items-center gap-1">
+                                            <input
+                                                type="color"
+                                                value={field.position?.fontColor || '#000000'}
+                                                onChange={(e) => updateField(field.uniqueId, { position: { ...field.position, fontColor: e.target.value } })}
+                                                className="w-8 h-8 rounded border cursor-pointer p-0"
+                                            />
+                                            <input
+                                                type="text"
+                                                value={field.position?.fontColor || '#000000'}
+                                                onChange={(e) => updateField(field.uniqueId, { position: { ...field.position, fontColor: e.target.value } })}
+                                                className="flex-1 px-2 py-1 border rounded text-sm"
+                                                placeholder="#000000"
+                                            />
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label className="text-xs text-slate-500">Text Align</label>
+                                        <select
+                                            value={field.position?.textAlign || 'left'}
+                                            onChange={(e) => updateField(field.uniqueId, { position: { ...field.position, textAlign: e.target.value } })}
+                                            className="w-full px-2 py-1 border rounded text-sm"
+                                        >
+                                            <option value="left">Left</option>
+                                            <option value="center">Center</option>
+                                            <option value="right">Right</option>
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-3 mb-3">
+                                    <div>
+                                        <label className="text-xs text-slate-500">Max Width (px) - for text truncation</label>
+                                        <input
+                                            type="number"
+                                            value={field.position?.maxWidth || 0}
+                                            onChange={(e) => updateField(field.uniqueId, { position: { ...field.position, maxWidth: parseInt(e.target.value) || 0 } })}
+                                            className="w-full px-2 py-1 border rounded text-sm"
+                                            placeholder="0 = no limit"
+                                        />
+                                        <p className="text-[10px] text-slate-400 mt-0.5">Text will truncate with "..." if exceeds this width</p>
                                     </div>
                                 </div>
 

@@ -783,6 +783,26 @@ router.post('/reset-password', async (req, res) => {
 });
 
 // ============================================
+// LOGOUT - Invalidate token
+// ============================================
+router.post('/logout', authMiddleware, async (req, res) => {
+    try {
+        // Optional: Add token to blacklist if you have a TokenBlacklist model
+        // await TokenBlacklist.create({ token: req.token, expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000) });
+
+        console.log('🔓 User logged out:', req.user.email);
+
+        res.json({
+            success: true,
+            message: 'Logged out successfully'
+        });
+    } catch (error) {
+        console.error('Logout error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// ============================================
 // HELPERS
 // ============================================
 

@@ -2,6 +2,8 @@
 import React, { useState, useEffect } from 'react';
 import { coWorkerAPI, organizationAPI } from '../../services/api';
 import { AnimatePresence, motion } from 'framer-motion';
+import PermissionGroup from '../../components/PermissionGroup';
+import { PERMISSIONS } from '../../constants/permissions';
 import * as XLSX from 'xlsx';
 import toast from 'react-hot-toast';
 
@@ -91,25 +93,25 @@ const CoWorkers = () => {
   };
 
   // Helper function to build permissions array for all organizations
+  // Helper function to build permissions array for all organizations
   const buildPermissionsArray = (existingPermissions = []) => {
-    // Create a map of existing permissions by organizationId
     const permissionsMap = new Map();
     existingPermissions.forEach(perm => {
       permissionsMap.set(perm.organizationId, perm);
     });
 
-    // Build permissions for ALL organizations
     return organizations.map(org => ({
       organizationId: org._id,
       organizationName: org.name,
-      canViewAnalytics: permissionsMap.get(org._id)?.canViewAnalytics || false,
-      canGenerateCards: permissionsMap.get(org._id)?.canGenerateCards || false,
+      // All permissions are now independent
       canManageStudents: permissionsMap.get(org._id)?.canManageStudents || false,
-      canManageTemplates: permissionsMap.get(org._id)?.canManageTemplates || false,
-      canUploadCSV: permissionsMap.get(org._id)?.canUploadCSV || false,
       canUploadPhotos: permissionsMap.get(org._id)?.canUploadPhotos || false,
-      canMarkAttendance: permissionsMap.get(org._id)?.canMarkAttendance || false,
+      canUploadCSV: permissionsMap.get(org._id)?.canUploadCSV || false,
+      canGenerateCards: permissionsMap.get(org._id)?.canGenerateCards || false,
+      canManageTemplates: permissionsMap.get(org._id)?.canManageTemplates || false,
+      canViewAnalytics: permissionsMap.get(org._id)?.canViewAnalytics || false,
       canViewAuditLogs: permissionsMap.get(org._id)?.canViewAuditLogs || false
+      // canMarkAttendance - REMOVED
     }));
   };
 
@@ -218,16 +220,29 @@ const CoWorkers = () => {
     setSaving(true);
 
     try {
+      // Expand permissions: if canGenerateCards is true, ensure all child permissions are true
+      const expandedPermissions = formData.permissions.map(orgPerm => {
+        const expanded = { ...orgPerm };
+
+        // If canGenerateCards is true, enable all related permissions
+        if (expanded.canGenerateCards) {
+          expanded.canManageStudents = true;
+          expanded.canUploadPhotos = true;
+          expanded.canUploadCSV = true;
+          expanded.canManageTemplates = true;
+        }
+
+        return expanded;
+      });
+
       const data = {
         firstName: formData.firstName,
         lastName: formData.lastName,
         email: formData.email,
         phoneNumber: formData.phoneNumber,
-        // Only send permissions that have at least one permission enabled
-        permissions: formData.permissions.filter(p =>
-          p.canGenerateCards || p.canManageStudents || p.canManageTemplates ||
-          p.canUploadCSV || p.canUploadPhotos || p.canViewAnalytics ||
-          p.canViewAuditLogs || p.canMarkAttendance
+        permissions: expandedPermissions.filter(p =>
+          p.canManageStudents || p.canUploadPhotos || p.canUploadCSV ||
+          p.canGenerateCards || p.canManageTemplates || p.canViewAnalytics || p.canViewAuditLogs
         )
       };
 
@@ -246,7 +261,7 @@ const CoWorkers = () => {
 
       if (response.success) {
         setShowModal(false);
-        await loadData(); // Refresh to get updated permissions
+        await loadData();
       } else {
         toast.error(response.error || 'Failed to save co-worker');
       }
@@ -300,19 +315,19 @@ const CoWorkers = () => {
         phoneNumber: '0788123456',
         organizationName: organizations[0]?.name || 'Organization Name',
         canManageStudents: 'YES',
+        canUploadPhotos: 'YES',
+        canUploadCSV: 'YES',
         canGenerateCards: 'YES',
-        canManageTemplates: 'NO',
-        canUploadCSV: 'NO',
-        canUploadPhotos: 'NO',
-        canViewAnalytics: 'NO',
-        canViewAuditLogs: 'NO'
+        canManageTemplates: 'YES',
+        canViewAnalytics: 'YES',
+        canViewAuditLogs: 'YES'
       }
     ];
 
     const ws = XLSX.utils.json_to_sheet(template);
     ws['!cols'] = [
       { wch: 15 }, { wch: 15 }, { wch: 30 }, { wch: 15 }, { wch: 20 },
-      { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 15 }, { wch: 15 },
+      { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 18 },
       { wch: 18 }, { wch: 18 }
     ];
 
@@ -367,12 +382,13 @@ const CoWorkers = () => {
         phoneNumber: row.phoneNumber?.toString(),
         organizationName: row.organizationName,
         canManageStudents: String(row.canManageStudents).toUpperCase() === 'YES',
+        canUploadPhotos: String(row.canUploadPhotos).toUpperCase() === 'YES',
+        canUploadCSV: String(row.canUploadCSV).toUpperCase() === 'YES',
         canGenerateCards: String(row.canGenerateCards).toUpperCase() === 'YES',
         canManageTemplates: String(row.canManageTemplates).toUpperCase() === 'YES',
-        canUploadCSV: String(row.canUploadCSV).toUpperCase() === 'YES',
-        canUploadPhotos: String(row.canUploadPhotos).toUpperCase() === 'YES',
         canViewAnalytics: String(row.canViewAnalytics).toUpperCase() === 'YES',
         canViewAuditLogs: String(row.canViewAuditLogs).toUpperCase() === 'YES'
+        // canMarkAttendance - REMOVED
       }));
 
       const response = await coWorkerAPI.bulkCreate(staffList);
@@ -758,45 +774,12 @@ const CoWorkers = () => {
                     ) : (
                       <div className="space-y-3">
                         {formData.permissions.map(orgPerm => (
-                          <details key={orgPerm.organizationId} className="bg-slate-50 rounded-xl border border-slate-200 group">
-                            <summary className="flex items-center justify-between p-3 cursor-pointer hover:bg-slate-100 rounded-xl">
-                              <div className="flex items-center space-x-2">
-                                <i className="pi pi-chevron-right text-xs text-slate-400 transition-transform group-open:rotate-90"></i>
-                                <span className="text-sm font-medium text-slate-700">{orgPerm.organizationName}</span>
-                              </div>
-                              {Object.values(orgPerm).filter(v => v === true).length > 0 && (
-                                <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full">
-                                  {Object.values(orgPerm).filter(v => v === true).length} permissions
-                                </span>
-                              )}
-                            </summary>
-                            <div className="p-3 grid grid-cols-2 gap-2 border-t border-slate-200">
-                              {[
-                                { key: 'canManageStudents', label: 'Manage Students', icon: 'pi pi-users' },
-                                { key: 'canGenerateCards', label: 'Generate Cards', icon: 'pi pi-qrcode' },
-                                { key: 'canManageTemplates', label: 'Manage Templates', icon: 'pi pi-image' },
-                                { key: 'canUploadPhotos', label: 'Upload Photos', icon: 'pi pi-camera' },
-                                { key: 'canUploadCSV', label: 'Import CSV', icon: 'pi pi-file-excel' },
-                                { key: 'canViewAnalytics', label: 'View Analytics', icon: 'pi pi-chart-line' },
-                                { key: 'canViewAuditLogs', label: 'Audit Logs', icon: 'pi pi-history' },
-                                { key: 'canMarkAttendance', label: 'Mark Attendance', icon: 'pi pi-calendar' },
-                              ].map(perm => (
-                                <label key={perm.key}
-                                  className={`flex items-center space-x-2 p-2 rounded-lg cursor-pointer transition-colors ${orgPerm[perm.key] ? 'bg-red-50 border border-red-200' : 'hover:bg-white'}`}>
-                                  <input
-                                    type="checkbox"
-                                    checked={orgPerm[perm.key] || false}
-                                    onChange={() => handlePermissionChange(orgPerm.organizationId, perm.key)}
-                                    className="w-4 h-4 text-red-600 rounded focus:ring-red-500"
-                                  />
-                                  <i className={`${perm.icon} text-xs ${orgPerm[perm.key] ? 'text-red-600' : 'text-slate-400'}`}></i>
-                                  <span className={`text-xs ${orgPerm[perm.key] ? 'text-red-700 font-medium' : 'text-slate-600'}`}>
-                                    {perm.label}
-                                  </span>
-                                </label>
-                              ))}
-                            </div>
-                          </details>
+                          <PermissionGroup
+                            key={orgPerm.organizationId}
+                            orgId={orgPerm.organizationId}
+                            permissions={formData.permissions}
+                            onPermissionChange={handlePermissionChange}
+                          />
                         ))}
                       </div>
                     )}

@@ -220,7 +220,8 @@ async function generateCardWithDynamicFields(student, template, studentPhotoUrl)
         y: Math.round(coord.y * scaleFactor),
         width: coord.width ? Math.round(coord.width * scaleFactor) : undefined,
         height: coord.height ? Math.round(coord.height * scaleFactor) : undefined,
-        maxWidth: coord.maxWidth ? Math.round(coord.maxWidth * scaleFactor) : undefined
+        maxWidth: coord.maxWidth ? Math.round(coord.maxWidth * scaleFactor) : undefined,  // ← Add this
+        fontSize: coord.fontSize ? Math.round(coord.fontSize * scaleFactor) : undefined   // ← Add this for reference
       };
     };
 
@@ -297,6 +298,7 @@ async function generateCardWithDynamicFields(student, template, studentPhotoUrl)
       }
 
       // Handle text fields
+      // Handle text fields - WITH FONT SCALING
       if (field.type === 'text') {
         let textValue = null;
 
@@ -334,20 +336,26 @@ async function generateCardWithDynamicFields(student, template, studentPhotoUrl)
 
         if (!textValue) continue;
 
+        // ✅ SCALE THE FONT SIZE
+        const originalFontSize = field.position.fontSize || 20;
+        const scaledFontSize = Math.max(8, Math.round(originalFontSize * scaleFactor));
+
+        console.log(`🔤 Scaling font: ${originalFontSize}px -> ${scaledFontSize}px (scale: ${scaleFactor})`);
+
         // Configure text rendering
         ctx.textBaseline = 'top';
         ctx.textAlign = field.position.textAlign || 'left';
-        ctx.font = `${field.position.isBold ? 'bold ' : ''}${field.position.fontSize || 20}px Arial`;
+        ctx.font = `${field.position.isBold ? 'bold ' : ''}${scaledFontSize}px Arial`;
         ctx.fillStyle = field.position.fontColor || '#000000';
 
         let displayText = String(textValue).trim();
 
-        // Handle text truncation
+        // Handle text truncation (also scale maxWidth)
         const maxWidth = scaledPos.maxWidth;
         if (maxWidth) {
-          let currentSize = field.position.fontSize || 20;
+          let currentSize = scaledFontSize;
           ctx.font = `${field.position.isBold ? 'bold ' : ''}${currentSize}px Arial`;
-          while (currentSize > 12 && ctx.measureText(displayText).width > maxWidth) {
+          while (currentSize > 8 && ctx.measureText(displayText).width > maxWidth) {
             currentSize--;
             ctx.font = `${field.position.isBold ? 'bold ' : ''}${currentSize}px Arial`;
           }
@@ -360,7 +368,7 @@ async function generateCardWithDynamicFields(student, template, studentPhotoUrl)
         }
 
         ctx.fillText(displayText, scaledPos.x, scaledPos.y);
-        console.log(`✅ Rendered ${field.label}: "${displayText}" at (${scaledPos.x}, ${scaledPos.y})`);
+        console.log(`✅ Rendered ${field.label}: "${displayText}" at (${scaledPos.x}, ${scaledPos.y}) with font ${scaledFontSize}px`);
       }
     }
 

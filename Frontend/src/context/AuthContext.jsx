@@ -216,15 +216,34 @@ export const AuthProvider = ({ children }) => {
     }));
   };
 
+  
   const logout = async () => {
     try {
+      // Call server logout to invalidate token
       await authAPI.logout();
     } catch (error) {
-      console.error('Logout error:', error);
+      console.error('Logout API error:', error);
+      // Continue with local cleanup even if API fails
     } finally {
+      // Clear all auth data
       setUser(null);
+
+      // Remove token from all storage
       storage.removeItem('capmis_token');
-      disconnectSocket(); // ✅ Disconnect socket on logout
+
+      // Clear any cached user data
+      try {
+        localStorage.removeItem('capmis_user');
+        sessionStorage.clear();
+      } catch (e) {
+        console.warn('Could not clear storage:', e);
+      }
+
+      // Disconnect WebSocket
+      disconnectSocket();
+
+      // Redirect to login page
+      window.location.href = '/login';
     }
   };
 

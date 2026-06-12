@@ -1,4 +1,4 @@
-// components/auth/Login.jsx - NAVY & CRIMSON THEME with PrimeIcons
+// components/auth/Login.jsx - ADD REDIRECT FOR AUTHENTICATED USERS
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
@@ -9,8 +9,24 @@ const Login = () => {
   const [touched, setTouched] = useState({ email: false, password: false });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const { login } = useAuth();
+  const { login, user, isAuthenticated } = useAuth();
   const navigate = useNavigate();
+
+  // ✅ REDIRECT IF ALREADY LOGGED IN
+  useEffect(() => {
+    if (isAuthenticated() && user) {
+      console.log('🔐 User already logged in, redirecting to dashboard...');
+
+      // Redirect based on role
+      if (user.role === 'super_admin') {
+        navigate('/super-admin/dashboard', { replace: true });
+      } else if (user.role === 'co_worker') {
+        navigate('/co-worker/dashboard', { replace: true });
+      } else {
+        navigate('/dashboard', { replace: true });
+      }
+    }
+  }, [user, isAuthenticated, navigate]);
 
   const validateField = (name, value) => {
     let error = '';
@@ -65,7 +81,7 @@ const Login = () => {
       if (result.success) {
         const redirectPath = result.redirectTo || '/dashboard';
         if (result.needsPasswordChange) {
-          navigate('/co-worker/settings');
+          navigate('/co-worker/settings?forcePasswordChange=true');
         } else {
           navigate(redirectPath);
         }

@@ -1891,9 +1891,14 @@ const FileUploadCard = ({ title, accept, icon, color, onFileSelect, note }) => {
     );
 };
 
-const DraggableItem = ({ id, displayX, displayY, label, isPhotoField, isActive, field, sampleStudent, selectedStudent, generationMode, previewScale, previewPhotoWidth, previewPhotoHeight, onPositionChange }) => {
-    const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id });
+// In CardGeneration.jsx - COMPLETE FIXED DraggableItem component
 
+const DraggableItem = ({
+    id, displayX, displayY, label, isPhotoField, isActive, field,
+    sampleStudent, selectedStudent, generationMode, previewScale,
+    previewPhotoWidth, previewPhotoHeight, onPositionChange
+}) => {
+    const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id });
     const [photoUrl, setPhotoUrl] = useState(null);
 
     useEffect(() => {
@@ -1921,6 +1926,7 @@ const DraggableItem = ({ id, displayX, displayY, label, isPhotoField, isActive, 
         cursor: 'grab',
     };
 
+    // For photo fields
     if (isPhotoField && field) {
         const styling = field.styling || {};
         const {
@@ -1980,20 +1986,11 @@ const DraggableItem = ({ id, displayX, displayY, label, isPhotoField, isActive, 
                             const startWidth = width;
                             const startHeight = height;
 
-                            // Get scale factor for converting preview size to original
-                            const scale = previewScale || 1;
-
                             const onMouseMove = (moveEvent) => {
                                 const deltaX = moveEvent.clientX - startX;
                                 const deltaY = moveEvent.clientY - startY;
-
-                                // New size in preview pixels
-                                const newPreviewWidth = Math.max(50, startWidth + deltaX);
-                                const newPreviewHeight = Math.max(50, startHeight + deltaY);
-
-                                // Convert to original dimensions
-                                const newOriginalWidth = Math.round(newPreviewWidth / scale);
-                                const newOriginalHeight = Math.round(newPreviewHeight / scale);
+                                const newWidth = Math.max(50, startWidth + deltaX);
+                                const newHeight = Math.max(50, startHeight + deltaY);
 
                                 if (window.updateFieldPosition) {
                                     window.updateFieldPosition(
@@ -2001,9 +1998,8 @@ const DraggableItem = ({ id, displayX, displayY, label, isPhotoField, isActive, 
                                         field.position?.x || 0,
                                         field.position?.y || 0,
                                         {
-                                            width: newOriginalWidth,
-                                            height: newOriginalHeight,
-                                            isFromPreview: true
+                                            width: Math.round(newWidth / (previewScale || 1)),
+                                            height: Math.round(newHeight / (previewScale || 1))
                                         }
                                     );
                                 }
@@ -2028,14 +2024,102 @@ const DraggableItem = ({ id, displayX, displayY, label, isPhotoField, isActive, 
         );
     }
 
+    // FOR TEXT FIELDS - Apply actual styling from field.position
+    const position = field?.position || {};
+    const {
+        fontSize = 20,
+        isBold = false,
+        fontColor = '#000000',
+        textAlign = 'left'
+    } = position;
+
+    // Calculate scaled font size for preview
+    const previewFontSize = Math.max(10, Math.round(fontSize * (previewScale || 1)));
+
+    // Get the actual text value to display
+    let displayText = label; // Default to label
+
+    if (generationMode === 'single' && selectedStudent) {
+        // For single card mode, show actual student data
+        if (field.dataSource?.fieldPath) {
+            const parts = field.dataSource.fieldPath.split('.');
+            let value = selectedStudent;
+            for (const part of parts) {
+                value = value?.[part];
+            }
+            if (value) displayText = String(value);
+        } else {
+            const autoMap = {
+                'name': selectedStudent.name,
+                'student_id': selectedStudent.student_id,
+                'class': selectedStudent.studentDetails?.class,
+                'level': selectedStudent.studentDetails?.level,
+                'gender': selectedStudent.gender,
+                'residence': selectedStudent.residence,
+                'academic_year': selectedStudent.studentDetails?.academic_year,
+                'department': selectedStudent.employeeDetails?.department,
+                'position': selectedStudent.employeeDetails?.position
+            };
+            if (autoMap[field.name]) displayText = String(autoMap[field.name]);
+        }
+    } else if (sampleStudent) {
+        // For batch mode, show sample data
+        if (field.dataSource?.fieldPath) {
+            const parts = field.dataSource.fieldPath.split('.');
+            let value = sampleStudent;
+            for (const part of parts) {
+                value = value?.[part];
+            }
+            if (value) displayText = String(value);
+        } else {
+            const autoMapBatch = {
+                'name': sampleStudent.name,
+                'student_id': sampleStudent.student_id,
+                'class': sampleStudent.studentDetails?.class,
+                'level': sampleStudent.studentDetails?.level,
+                'gender': sampleStudent.gender,
+                'residence': sampleStudent.residence,
+                'academic_year': sampleStudent.studentDetails?.academic_year
+            };
+            if (autoMapBatch[field.name]) displayText = String(autoMapBatch[field.name]);
+        }
+    }
+
+    // Truncate long text for preview
+    if (displayText.length > 30) {
+        displayText = displayText.substring(0, 27) + '...';
+    }
+
+    // Text alignment styles
+    const justifyContent =
+        textAlign === 'center' ? 'center' :
+            textAlign === 'right' ? 'flex-end' : 'flex-start';
+
     return (
-        <div ref={setNodeRef} style={style} {...listeners} {...attributes} className={`select-none transition-transform duration-150 ${isDragging ? 'scale-110' : 'hover:scale-105'}`}>
-            <div className={`px-3 py-1.5 rounded-xl text-xs font-bold shadow-2xl border-2 backdrop-blur-sm whitespace-nowrap max-w-[200px] truncate ${isDragging ? 'bg-gradient-to-r from-red-600 to-red-500 text-white border-red-300 shadow-red-500/50' :
-                'bg-white/95 text-slate-800 border-green-300 shadow-green-500/20'
-                }`}>
-                {label}
+        <div
+            ref={setNodeRef}
+            style={style}
+            {...listeners}
+            {...attributes}
+            className={`select-none transition-transform duration-150 ${isDragging ? 'scale-110 z-50' : 'hover:scale-102'}`}
+        >
+            <div
+                className={`px-2 py-1 rounded-md shadow-lg border-2 backdrop-blur-sm whitespace-nowrap max-w-[300px] ${isDragging ? 'border-red-400 bg-red-500/90' : 'border-transparent bg-white/95'}`}
+                style={{
+                    fontSize: `${previewFontSize}px`,
+                    fontWeight: isBold ? 'bold' : 'normal',
+                    color: fontColor,
+                    textAlign: textAlign,
+                    display: 'flex',
+                    justifyContent: justifyContent,
+                    alignItems: 'center',
+                    boxShadow: isDragging ? '0 10px 25px -5px rgba(0,0,0,0.2)' : '0 4px 6px -1px rgba(0,0,0,0.1)'
+                }}
+            >
+                {displayText}
                 {isDragging && <span className="ml-2 text-[10px] opacity-80 animate-pulse">↗️</span>}
             </div>
+            
         </div>
     );
 };

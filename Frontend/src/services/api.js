@@ -149,7 +149,16 @@ export const authAPI = {
   },
 
   logout: async () => {
-    localStorage.removeItem('capmis_token');
+    try {
+      const response = await api.post('/auth/logout');
+      return response.data;
+    } catch (error) {
+      console.error('Logout API error:', error);
+      throw error;
+    } finally {
+      // Always clear local token regardless of server response
+      localStorage.removeItem('capmis_token');
+    }
   },
 
   forgotPassword: async (email) => {
@@ -322,6 +331,14 @@ export const studentAPI = {
     });
     return response.data;
   },
+  bulkUploadPhotos: async (formData) => {
+    const response = await api.post('/students/bulk-upload-photos', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 300000
+    });
+    return response.data;
+  },
+
 
   deleteAll: async (organizationId) => {
     const response = await api.delete('/students/delete-all', {

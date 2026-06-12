@@ -1,4 +1,4 @@
-// App.jsx - CARD-AGENT
+// App.jsx - CARD-AGENT with NotFound route
 import React from 'react';
 import { Toaster } from 'react-hot-toast';
 import SocketListener from './components/SocketListener';
@@ -8,6 +8,9 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import Dashboard from './components/Dashboard';
 import Login from './pages/auth/Login';
 import MultiStepRegistration from './pages/auth/MultiStepRegistration';
+import NotFound from './components/errors/NotFound';  // ← ADD THIS IMPORT
+import ForgotPassword from './pages/auth/ForgotPassword';
+import ResetPassword from './pages/auth/ResetPassword';
 
 // Protected Route wrapper
 const ProtectedRoute = ({ children }) => {
@@ -64,6 +67,8 @@ function App() {
           {/* Public routes */}
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<MultiStepRegistration />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
+          <Route path="/reset-password" element={<ResetPassword />} />
 
           {/* Root redirect based on role */}
           <Route path="/" element={<RoleBasedDashboard />} />
@@ -89,8 +94,9 @@ function App() {
             </ProtectedRoute>
           } />
 
-          {/* Catch all */}
-          <Route path="*" element={<Navigate to="/" replace />} />
+          {/* 404 Not Found - Catch all unmatched routes */}
+          <Route path="/404" element={<NotFound />} />
+          <Route path="*" element={<NotFound />} />
         </Routes>
       </AuthProvider>
     </BrowserRouter>

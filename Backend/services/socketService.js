@@ -35,6 +35,36 @@ class SocketService extends EventEmitter {
             this.emitToUser(data.userId, 'student:bulk-import-progress', data);
         });
 
+        // ==================== BULK IMPORT EVENTS ====================
+        this.on('bulk-import:started', (data) => {
+            this.emitToUser(data.userId, 'bulk-import:started', data);
+        });
+
+        this.on('bulk-import:progress', (data) => {
+            this.emitToUser(data.userId, 'bulk-import:progress', data);
+        });
+
+        this.on('bulk-import:complete', (data) => {
+            this.emitToUser(data.userId, 'bulk-import:complete', data);
+        });
+
+        this.on('bulk-import:error', (data) => {
+            this.emitToUser(data.userId, 'bulk-import:error', data);
+        });
+
+        // ==================== BULK PHOTO UPLOAD EVENTS ====================
+        this.on('bulk-photo:started', (data) => {
+            this.emitToUser(data.userId, 'bulk-photo:started', data);
+        });
+
+        this.on('bulk-photo:progress', (data) => {
+            this.emitToUser(data.userId, 'bulk-photo:progress', data);
+        });
+
+        this.on('bulk-photo:complete', (data) => {
+            this.emitToUser(data.userId, 'bulk-photo:complete', data);
+        });
+
         // ==================== CARD EVENTS ====================
         this.on('card:generated', (data) => {
             this.emitToCompany(data.companyId, 'card:generated', data);

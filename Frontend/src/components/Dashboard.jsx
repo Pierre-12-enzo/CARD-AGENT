@@ -1,7 +1,13 @@
-// components/Dashboard.jsx - CARD-AGENT NAVY & CRIMSON THEME with PrimeIcons
+// components/Dashboard.jsx - ADD 404 CATCH-ALL ROUTE
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Routes, Route, Link, useLocation, Navigate } from 'react-router-dom';
+import NotFound from './errors/NotFound';  // ← ADD THIS IMPORT
+import toast from 'react-hot-toast';
+
+
+import HelpCenter from '../pages/HelpCenter';
+
 
 // Admin Pages
 import Overview from '../pages/dashboard/Overview';
@@ -78,15 +84,18 @@ const Dashboard = () => {
         { icon: 'pi pi-building', label: 'Companies', path: '/super-admin/companies' },
         { icon: 'pi pi-key', label: 'Licenses', path: '/super-admin/licenses' },
         { icon: 'pi pi-calendar', label: 'Audit Logs', path: '/super-admin/audit-logs' },
-        { icon: 'pi pi-cog', label: 'Settings', path: '/super-admin/settings' }
+        { icon: 'pi pi-cog', label: 'Settings', path: '/super-admin/settings' },
+        { icon: 'pi pi-question-circle', label: 'Help Center', path: '/super-admin/help' }
+
       ];
     }
     if (user?.role === 'co_worker') {
       const perms = user?.permissions || [];
-      console.log(perms);
       const items = [
         { icon: 'pi pi-chart-line', label: 'Overview', path: '/co-worker/dashboard', show: true },
-        { icon: 'pi pi-cog', label: 'Settings', path: '/co-worker/settings', show: true }
+        { icon: 'pi pi-cog', label: 'Settings', path: '/co-worker/settings', show: true },
+        { icon: 'pi pi-question-circle', label: 'Help Center', path: '/co-worker/help' }
+
       ];
 
       const hasPerm = (perm) => perms.some(p => p[perm]);
@@ -96,7 +105,6 @@ const Dashboard = () => {
       items.push({ icon: 'pi pi-images', label: 'Photos', path: '/co-worker/photos', show: hasPerm('canUploadPhotos') });
       items.push({ icon: 'pi pi-csv', label: 'CSV Upload', path: '/co-worker/bulk-import', show: hasPerm('canUploadCSV') });
       items.push({ icon: 'pi pi-image', label: 'Templates', path: '/co-worker/templates', show: hasPerm('canManageTemplates') });
-      
 
       return items.filter(i => i.show);
     }
@@ -109,7 +117,9 @@ const Dashboard = () => {
       { icon: 'pi pi-image', label: 'Templates', path: '/dashboard/templates' },
       { icon: 'pi pi-user-plus', label: 'Co-Workers', path: '/dashboard/co-workers' },
       { icon: 'pi pi-calendar', label: 'Audit Logs', path: '/dashboard/audit-logs' },
-      { icon: 'pi pi-cog', label: 'Settings', path: '/dashboard/settings' }
+      { icon: 'pi pi-cog', label: 'Settings', path: '/dashboard/settings' },
+      { icon: 'pi pi-question-circle', label: 'Help Center', path: '/dashboard/help' }
+
     ];
   };
 
@@ -218,7 +228,15 @@ const Dashboard = () => {
               </div>
             </div>
             <button
-              onClick={logout}
+              onClick={async () => {
+                toast.loading('Logging out...', { id: 'logout' });
+                try {
+                  await logout();
+                  toast.success('Logged out successfully!', { id: 'logout' });
+                } catch (error) {
+                  toast.error('Logout failed', { id: 'logout' });
+                }
+              }}
               className="w-full flex items-center justify-center space-x-2 px-2 py-2 text-sm text-slate-600 hover:bg-red-50 hover:text-red-600 rounded-lg transition-colors"
             >
               <i className="pi pi-sign-out text-base"></i>
@@ -308,10 +326,11 @@ const Dashboard = () => {
           </div>
         </header>
 
-        {/* Main Content */}
+        {/* Main Content - WITH 404 CATCH-ALL ROUTE */}
         <main className="flex-1 overflow-auto">
           {user?.role === 'admin' && (
             <Routes>
+              <Route path="/help" element={<HelpCenter />} />
               <Route path="/" element={<Overview />} />
               <Route path="/organizations" element={<Organizations />} />
               <Route path="/students" element={<Students />} />
@@ -320,29 +339,37 @@ const Dashboard = () => {
               <Route path="/co-workers" element={<CoWorkers />} />
               <Route path="/audit-logs" element={<AuditLogs />} />
               <Route path="/settings" element={<Settings />} />
+              {/* ✅ CATCH ALL - Any invalid admin route */}
+              <Route path="*" element={<NotFound />} />
             </Routes>
           )}
 
           {user?.role === 'super_admin' && (
             <Routes>
+              <Route path="/help" element={<HelpCenter />} />
               <Route path="/dashboard" element={<SuperAdminOverview />} />
               <Route path="/companies" element={<CompaniesManager />} />
               <Route path="/licenses" element={<LicensesManager />} />
               <Route path="/audit-logs" element={<AuditLogs />} />
               <Route path="/settings" element={<SuperAdminSettings />} />
+              {/* ✅ CATCH ALL - Any invalid super admin route */}
+              <Route path="*" element={<NotFound />} />
             </Routes>
           )}
 
           {user?.role === 'co_worker' && (
             <Routes>
+              <Route path="/help" element={<HelpCenter />} />
               <Route path="/dashboard" element={<CoWorkerOverview />} />
-              <Route path="/students" element={<Students />} />           {/* Reuse admin Students.jsx */}
-              <Route path="/cards" element={<CardGeneration />} />        {/* Reuse admin CardGeneration.jsx */}
-              <Route path="/templates" element={<Templates />} />         {/* Reuse admin Templates.jsx */}
-              <Route path="/audit-logs" element={<CoWorkerAuditLogs />} /> {/* NEW */}
-              <Route path="/bulk-import" element={<BulkImport />} />      {/* NEW */}
-              <Route path="/photos" element={<PhotoUpload />} />          {/* NEW */}
+              <Route path="/students" element={<Students />} />
+              <Route path="/cards" element={<CardGeneration />} />
+              <Route path="/templates" element={<Templates />} />
+              <Route path="/audit-logs" element={<CoWorkerAuditLogs />} />
+              <Route path="/bulk-import" element={<BulkImport />} />
+              <Route path="/photos" element={<PhotoUpload />} />
               <Route path="/settings" element={<CoWorkerSettings />} />
+              {/* ✅ CATCH ALL - Any invalid co-worker route */}
+              <Route path="*" element={<NotFound />} />
             </Routes>
           )}
         </main>
