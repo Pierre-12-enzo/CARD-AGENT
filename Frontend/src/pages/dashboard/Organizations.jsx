@@ -779,50 +779,48 @@ const Organizations = () => {
               </div>
               <h3 className="text-xl font-bold text-slate-800 mb-2">Delete Organization?</h3>
               <p className="text-slate-500 text-sm mb-1">
-                You are about to permanently delete{" "}
-                <span className="font-semibold text-slate-700">"{showDeleteConfirm.name}"</span>.
+                You are about to delete <span className="font-semibold text-slate-700">"{showDeleteConfirm.name}"</span>.
               </p>
 
               <div className="bg-red-50 border border-red-200 rounded-xl p-4 mt-4 text-left">
-                <p className="text-sm font-semibold text-red-800 mb-2">This will permanently delete:</p>
+                <p className="text-sm font-semibold text-red-800 mb-2">⚠️ Warning: This organization has:</p>
                 <ul className="text-sm text-red-700 space-y-1 list-disc list-inside">
-                  <li>All students & employees ({showDeleteConfirm.stats?.total || 0})</li>
-                  <li>All their photos</li>
-                  <li>All card generation history</li>
-                  <li>All templates ({showDeleteConfirm.stats?.templates || 0})</li>
+                  <li>{showDeleteConfirm.stats?.students || 0} Students</li>
+                  <li>{showDeleteConfirm.stats?.employees || 0} Employees</li>
+                  <li>{showDeleteConfirm.stats?.templates || 0} Templates</li>
+                  <li>{showDeleteConfirm.stats?.cardsGenerated || 0} Generated Cards</li>
                 </ul>
+                <p className="text-sm text-red-600 font-semibold mt-3">
+                  You must delete all records first before permanently deleting this organization.
+                </p>
               </div>
 
-              <p className="text-sm text-red-600 font-semibold mt-4">
-                ⚠️ This action cannot be undone!
-              </p>
-            </div>
-
-            <div className="flex gap-3 mt-6">
-              <button
-                onClick={() => setShowDeleteConfirm(null)}
-                disabled={deleting}
-                className="flex-1 py-2.5 border border-slate-300 rounded-xl text-slate-700 font-medium hover:bg-slate-50 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleDelete}
-                disabled={deleting}
-                className="flex-1 py-2.5 bg-red-600 text-white rounded-xl font-medium hover:bg-red-700 disabled:opacity-50 transition-colors flex items-center justify-center space-x-2"
-              >
-                {deleting ? (
-                  <>
-                    <i className="pi pi-spinner pi-spin"></i>
-                    <span>Deleting...</span>
-                  </>
-                ) : (
-                  <>
-                    <i className="pi pi-trash"></i>
-                    <span>Delete Permanently</span>
-                  </>
-                )}
-              </button>
+              <div className="flex gap-3 mt-6">
+                <button
+                  onClick={() => setShowDeleteConfirm(null)}
+                  className="flex-1 py-2.5 border border-slate-300 rounded-xl text-slate-700 font-medium hover:bg-slate-50 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={async () => {
+                    // First soft delete (deactivate)
+                    try {
+                      const response = await organizationAPI.delete(showDeleteConfirm._id);
+                      if (response.success) {
+                        toast.warning(`${showDeleteConfirm.name} has been deactivated. Delete all records first to permanently remove it.`);
+                        setShowDeleteConfirm(null);
+                        loadOrganizations();
+                      }
+                    } catch (error) {
+                      toast.error(error.response?.data?.error || 'Failed to deactivate organization');
+                    }
+                  }}
+                  className="flex-1 py-2.5 bg-amber-600 text-white rounded-xl font-medium hover:bg-amber-700 transition-colors"
+                >
+                  Deactivate (Soft Delete)
+                </button>
+              </div>
             </div>
           </div>
         </div>

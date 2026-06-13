@@ -6,6 +6,7 @@ const Student = require('../models/Student');
 const Company = require('../models/Company');
 const Template = require('../models/Template');
 const AuditLog = require('../models/AuditLog');
+const CardHistory = require('../models/CardHistory');
 const authMiddleware = require('../middleware/authMiddleware');
 const roleMiddleware = require('../middleware/roleMiddleware');
 const { uploadSchoolLogo, deleteImage } = require('../utilis/cloudinaryAuth');
@@ -498,16 +499,18 @@ router.delete('/:id',
 
             const { permanent } = req.query;
 
-            // Check if organization has students
+            // Check counts before deletion
             const studentCount = await Student.countDocuments({ schoolId: organization._id });
             const templateCount = await Template.countDocuments({ schoolId: organization._id });
+            const cardHistoryCount = await CardHistory?.countDocuments({ organizationId: organization._id }) || 0;
 
             if (permanent === 'true') {
-                // Warn if has data
-                if (studentCount > 0 || templateCount > 0) {
+                // Show warning if has data
+                if (studentCount > 0 || templateCount > 0 || cardHistoryCount > 0) {
                     return res.status(400).json({
                         success: false,
-                        error: `Cannot permanently delete. Organization has ${studentCount} students and ${templateCount} templates. Delete them first or use soft delete.`
+                        error: `Cannot permanently delete. Organization has ${studentCount} people, ${templateCount} templates, and ${cardHistoryCount} card records. Please delete all records first or use soft delete.`,
+                        stats: { studentCount, templateCount, cardHistoryCount }
                     });
                 }
 
@@ -545,7 +548,7 @@ router.delete('/:id',
                     message: 'Organization permanently deleted'
                 });
             } else {
-                // Soft delete
+                // SOFT DELETE - Deactivate only
                 organization.isActive = false;
                 await organization.save();
 
@@ -560,7 +563,8 @@ router.delete('/:id',
                         type: organization.type,
                         permanent: false,
                         hadStudents: studentCount,
-                        hadTemplates: templateCount
+                        hadTemplates: templateCount,
+                        hadCardHistory: cardHistoryCount
                     },
                     ipAddress: req.ip,
                     userAgent: req.get('User-Agent')
@@ -568,7 +572,7 @@ router.delete('/:id',
 
                 res.json({
                     success: true,
-                    message: 'Organization deactivated successfully'
+                    message: `Organization deactivated successfully. ${studentCount} people, ${templateCount} templates, and ${cardHistoryCount} card records are preserved but inaccessible.`
                 });
             }
 

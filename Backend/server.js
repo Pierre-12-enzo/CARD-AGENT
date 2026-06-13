@@ -92,6 +92,8 @@ io.on('connection', (socket) => {
   });
 
   socket.join(`user_${socket.user.id}`);
+  console.log(`User ${socket.user.id} joined room user_${socket.user.id}`); // ← Add this
+
   socket.join(`role_${socket.user.role}`);
 
   if (socket.user.companyId) {

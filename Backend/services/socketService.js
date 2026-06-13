@@ -191,6 +191,7 @@ class SocketService extends EventEmitter {
      */
     emitToUser(userId, event, data) {
         if (this.io && userId) {
+             console.log(`📤 Emitting to user ${userId}: ${event}`, data);
             this.io.to(`user_${userId}`).emit(event, {
                 ...data,
                 timestamp: new Date().toISOString()

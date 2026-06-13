@@ -1,7 +1,8 @@
 // pages/dashboard/Settings.jsx - CARD-AGENT NAVY & CRIMSON - FULL CINEMATIC
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { authAPI, companyAPI, studentAPI, organizationAPI } from '../../services/api';
+import { authAPI, companyAPI, studentAPI } from '../../services/api';
+import toast from 'react-hot-toast';
 
 const Settings = () => {
   const { user, updateUser } = useAuth();
@@ -110,34 +111,44 @@ const Settings = () => {
     }
   }, [activeTab]);
 
-  // Handle delete all data for an organization
+  // Handle delete all data for an organization - WITH PROPER LOADING STATE
   const handleDeleteOrgData = async (orgId) => {
     if (confirmText !== 'DELETE') return;
 
     setDeleting(true);
+    setCleanupResult(null);
+
+    // Find the organization name for better messaging
+    const org = cleanupOrgs.find(o => o._id === orgId);
+
     try {
       const response = await studentAPI.deleteAll(orgId);
+
       if (response.success) {
         setCleanupResult({
           type: 'success',
-          message: `All records deleted successfully!`,
-          details: `${response.deletedCount || 0} records removed from the organization.`
+          message: `✅ Successfully deleted ${response.deletedCount || 0} records from "${org?.name || 'organization'}"!`,
+          details: `${response.deletedPhotos || 0} photos removed from cloud storage.`
         });
-        // Reload cleanup data
-        loadCleanupData();
+        // Reload cleanup data to refresh stats
+        await loadCleanupData();
+        toast.success(`Deleted ${response.deletedCount} records successfully`);
       } else {
         setCleanupResult({
           type: 'error',
           message: 'Failed to delete records',
           details: response.error || 'An error occurred'
         });
+        toast.error(response.error || 'Failed to delete records');
       }
     } catch (error) {
+      console.error('Delete error:', error);
       setCleanupResult({
         type: 'error',
         message: 'Failed to delete records',
-        details: error.message || 'An error occurred'
+        details: error.response?.data?.error || error.message || 'An error occurred'
       });
+      toast.error(error.response?.data?.error || 'Failed to delete records');
     } finally {
       setDeleting(false);
       setConfirmOrgId(null);
@@ -194,18 +205,6 @@ const Settings = () => {
       localStorage.setItem('cardagent_system_settings', JSON.stringify(systemSettings));
       showStatus('system_success');
     } catch (e) { showStatus('system_error'); } finally { setLoading(false); }
-  };
-
-  const handleDeleteAllStudents = async () => {
-    if (confirmAction !== 'delete-students') { setConfirmAction('delete-students'); setConfirmationText(''); return; }
-    if (confirmationText.toLowerCase() !== 'delete all students') { setCleanupResult({ type: 'error', message: 'Please type "DELETE ALL STUDENTS" exactly' }); return; }
-    setCleaning(true);
-    try {
-      const res = await studentAPI.deleteAll(cleanupStats.organizationId);
-      if (res.success) { setCleanupResult({ type: 'success', message: `Deleted ${res.deletedCount} students` }); loadCleanupStats(); }
-      else setCleanupResult({ type: 'error', message: res.error || 'Failed' });
-    } catch (e) { setCleanupResult({ type: 'error', message: e.message }); }
-    finally { setCleaning(false); setConfirmAction(null); setConfirmationText(''); }
   };
 
   const statusMessages = {
@@ -499,13 +498,11 @@ const Settings = () => {
                             <div>
                               <h4 className="font-bold text-slate-800">{org.name}</h4>
                               <span className="text-xs text-slate-500 capitalize flex items-center gap-1">
-                                <span className={`w-1.5 h-1.5 rounded-full ${org.type === 'corporate' ? 'bg-slate-500' : 'bg-red-500'
-                                  }`}></span>
+                                <span className={`w-1.5 h-1.5 rounded-full ${org.type === 'corporate' ? 'bg-slate-500' : 'bg-red-500'}`}></span>
                                 {org.type} • {org.code}
                               </span>
                             </div>
                           </div>
-                          {/* Live status indicator */}
                           <div className="flex items-center gap-1.5">
                             <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></span>
                             <span className="text-xs text-slate-400">Active</span>

@@ -1,6 +1,7 @@
-// pages/dashboard/Students.jsx - COMPLETE FIXED VERSION
+// pages/dashboard/Students.jsx - COMPLETE FIXED VERSION WITH PROGRESS
 import React, { useState, useEffect, useRef } from 'react';
 import { studentAPI, organizationAPI } from '../../services/api';
+import { initializeSocket, getSocket, isSocketConnected } from '../../services/socket';
 import { useAuth } from '../../context/AuthContext';
 import * as XLSX from 'xlsx';
 import toast from 'react-hot-toast';
@@ -17,6 +18,7 @@ const Students = () => {
   const [filteredStudents, setFilteredStudents] = useState([]);
   const [loading, setLoading] = useState(false);
   const [loadingOrgs, setLoadingOrgs] = useState(true);
+  const unsubscribeRef = useRef(null);
 
   // Modals
   const [showAddModal, setShowAddModal] = useState(false);
@@ -62,6 +64,11 @@ const Students = () => {
   const [idWarning, setIdWarning] = useState('');
 
   const modalRef = useRef(null);
+
+  // Debug progress changes
+  useEffect(() => {
+    console.log('📊 Progress state changed:', bulkImportProgress);
+  }, [bulkImportProgress]);
 
   // ==================== SMART LEVEL LOGIC ====================
 
@@ -475,24 +482,59 @@ const Students = () => {
       toast.error('Select an organization and upload a file');
       return;
     }
+
     setBulkLoading(true);
-    setShowImportProgress(true);
+
+    // ✅ STEP 1: Generate import ID on frontend FIRST
+    const tempImportId = `import-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+    // ✅ STEP 2: Reset progress and show modal BEFORE import starts
     resetProgress();
+    setShowImportProgress(true);
+
+    // ✅ STEP 3: Subscribe to events BEFORE making HTTP request
+    if (unsubscribeRef.current) {
+      unsubscribeRef.current();
+    }
+    unsubscribeRef.current = subscribeToImport(tempImportId, 'bulk-import');
+
+    // ✅ STEP 4: Wait a tiny bit for subscription to register
+    await new Promise(resolve => setTimeout(resolve, 100));
+
     try {
       let result;
-      let importId;
+
       if (withPhotos && photoZipFile) {
-        const response = await studentAPI.bulkImportWithPhotos(selectedOrg._id, csvFile, photoZipFile);
-        result = response;
-        importId = response.importId;
+        const formData = new FormData();
+        formData.append('csv', csvFile);
+        formData.append('photoZip', photoZipFile);
+        formData.append('organizationId', selectedOrg._id);
+        formData.append('importId', tempImportId); // Send the ID to backend
+
+        const response = await fetch(`${import.meta.env.VITE_API_URL}/students/bulk-import-with-photos`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('capmis_token')}`
+          },
+          body: formData
+        });
+        result = await response.json();
       } else {
-        const response = await studentAPI.bulkImportCSV(selectedOrg._id, csvFile);
-        result = response;
-        importId = response.importId;
+        const formData = new FormData();
+        formData.append('csv', csvFile);
+        formData.append('organizationId', selectedOrg._id);
+        formData.append('importId', tempImportId); // Send the ID to backend
+
+        const response = await fetch(`${import.meta.env.VITE_API_URL}/students/bulk-import`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('capmis_token')}`
+          },
+          body: formData
+        });
+        result = await response.json();
       }
-      if (importId) {
-        subscribeToImport(importId, 'bulk-import');
-      }
+
       if (result.success) {
         setBulkResults({
           created: result.results?.created || 0,
@@ -501,7 +543,7 @@ const Students = () => {
           errors: result.results?.errors || [],
           withPhotos: result.results?.withPhotos || 0
         });
-        toast.success(`Import started! Check progress window for details.`);
+        toast.success(`Import started!`);
         loadStudents();
       } else {
         toast.error(result.error || 'Import failed');
@@ -513,6 +555,8 @@ const Students = () => {
       setShowImportProgress(false);
     } finally {
       setBulkLoading(false);
+      // Close the bulk import modal
+      setShowBulkImport(false);
     }
   };
 
@@ -796,7 +840,33 @@ const Students = () => {
                     <div><label className="block text-sm font-medium text-slate-700 mb-1">CSV/Excel File *</label><div className="border-2 border-dashed border-slate-300 rounded-xl p-4 text-center hover:border-red-300 transition-colors"><input type="file" accept=".csv,.xlsx,.xls" className="hidden" id="csv-upload" onChange={handleCsvFileSelect} /><label htmlFor="csv-upload" className="cursor-pointer"><i className="pi pi-file-excel text-2xl text-slate-400 mb-1 block"></i><span className="text-sm text-slate-600">{csvFile ? csvFile.name : 'Click to upload CSV/Excel'}</span></label></div></div>
                     <div><label className="block text-sm font-medium text-slate-700 mb-1">Photos ZIP (Optional)<span className="text-xs text-slate-400 ml-2">- name photos as student_id.jpg</span></label><div className="border-2 border-dashed border-slate-300 rounded-xl p-4 text-center hover:border-red-300 transition-colors"><input type="file" accept=".zip" className="hidden" id="zip-upload" onChange={(e) => setPhotoZipFile(e.target.files[0])} /><label htmlFor="zip-upload" className="cursor-pointer"><i className="pi pi-images text-2xl text-slate-400 mb-1 block"></i><span className="text-sm text-slate-600">{photoZipFile ? photoZipFile.name : 'Click to upload photos ZIP'}</span></label></div></div>
                     <div className="bg-amber-50 border border-amber-200 rounded-xl p-3"><h4 className="text-sm font-semibold text-amber-800 mb-1">📸 Photo Naming Guide</h4><p className="text-xs text-amber-700">Name each photo to match the <strong>student_id/employeeId</strong> in your CSV.<br />Example: <code className="bg-amber-100 px-1 rounded">S1A-001.jpg</code> or <code className="bg-amber-100 px-1 rounded">MON-001.jpg</code></p></div>
-                    {bulkPreview.length > 0 && (<div><h4 className="font-semibold text-slate-800 mb-2">Preview (First 5 Rows)</h4><div className="overflow-x-auto rounded-xl border border-slate-200 max-h-40"><table className="w-full text-xs"><thead className="bg-slate-50 sticky top-0"><tr>{Object.keys(bulkPreview[0]).slice(0, 8).map(key => (<th key={key} className="px-3 py-2 text-left font-semibold text-slate-600 whitespace-nowrap">{key}</th>))}</tr></thead><tbody className="divide-y divide-slate-100">{bulkPreview.map((row, i) => (<tr key={i}>{Object.values(row).slice(0, 8).map((val, j) => (<td key={j} className="px-3 py-2 text-slate-700 whitespace-nowrap">{String(val || '')}</td>))} </tr>))}</tbody>}</table></div></div>)}
+
+                    {bulkPreview.length > 0 && (
+                      <div>
+                        <h4 className="font-semibold text-slate-800 mb-2">Preview (First 5 Rows)</h4>
+                        <div className="overflow-x-auto rounded-xl border border-slate-200 max-h-40">
+                          <table className="w-full text-xs">
+                            <thead className="bg-slate-50 sticky top-0">
+                              <tr>
+                                {Object.keys(bulkPreview[0]).slice(0, 8).map(key => (
+                                  <th key={key} className="px-3 py-2 text-left font-semibold text-slate-600 whitespace-nowrap">{key}</th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                              {bulkPreview.map((row, i) => (
+                                <tr key={i}>
+                                  {Object.values(row).slice(0, 8).map((val, j) => (
+                                    <td key={j} className="px-3 py-2 text-slate-700 whitespace-nowrap">{String(val || '')}</td>
+                                  ))}
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+
                     {legacyImportProgress && (<div className="bg-blue-50 border border-blue-200 rounded-xl p-4 flex items-center space-x-3"><i className="pi pi-spinner pi-spin text-blue-600"></i><span className="text-sm text-blue-700">{legacyImportProgress.message}</span></div>)}
                   </>
                 ) : (
@@ -825,7 +895,11 @@ const Students = () => {
               </div>
               <div className="p-5">
                 <p className="text-sm text-slate-600 mb-4">Upload photos for students without photos. Photos will be matched by student_id.</p>
-                <BulkPhotoUploadComponent organizationId={selectedOrg?._id} onComplete={() => { setShowBulkPhotoModal(false); loadStudents(); }} />
+                <BulkPhotoUploadComponent
+                  setShowImportProgress={setShowImportProgress}
+                  organizationId={selectedOrg?._id}
+                  onComplete={() => { setShowBulkPhotoModal(false); loadStudents(); }}
+                />
               </div>
             </div>
           </div>
@@ -842,26 +916,36 @@ const Students = () => {
         )}
 
         {/* Bulk Import Progress Modal */}
-        <BulkImportProgressModal isOpen={showImportProgress} onClose={() => { setShowImportProgress(false); resetProgress(); }} progress={bulkImportProgress} type="import" />
-
+        <BulkImportProgressModal
+          key={bulkImportProgress.importId || 'progress-modal'}
+          isOpen={showImportProgress}
+          onClose={() => {
+            setShowImportProgress(false);
+            resetProgress();
+            if (unsubscribeRef.current) {
+              unsubscribeRef.current();
+              unsubscribeRef.current = null;
+            }
+          }}
+          progress={bulkImportProgress}
+          type="import"
+        />
       </div>
     </>
-
   );
 };
 
 // ==================== SUB-COMPONENTS ====================
 
-const BulkPhotoUploadComponent = ({ organizationId, onComplete }) => {
+const BulkPhotoUploadComponent = ({ organizationId, onComplete, setShowImportProgress }) => {
   const [photoZipFile, setPhotoZipFile] = useState(null);
   const [uploading, setUploading] = useState(false);
-  const [showProgress, setShowProgress] = useState(false);
   const [uploadResults, setUploadResults] = useState(null);
   const [studentsWithoutPhotos, setStudentsWithoutPhotos] = useState(null);
   const [loadingStats, setLoadingStats] = useState(false);
-  const { progress, subscribeToImport, resetProgress } = useBulkImportProgress();
+  const { subscribeToImport, resetProgress } = useBulkImportProgress();
+  const unsubscribeRef = useRef(null);
 
-  // Fetch students without photos when organization changes
   useEffect(() => {
     if (organizationId) {
       fetchStudentsWithoutPhotos();
@@ -872,14 +956,9 @@ const BulkPhotoUploadComponent = ({ organizationId, onComplete }) => {
     if (!organizationId) return;
     setLoadingStats(true);
     try {
-      const response = await studentAPI.getByOrganization(organizationId, {
-        limit: 1,
-        hasPhoto: 'false'
-      });
-      // Just get the count
       const statsResponse = await studentAPI.getStats({ organizationId });
       setStudentsWithoutPhotos({
-        count: statsResponse.stats?.studentsWithoutPhotos + statsResponse.stats?.employeesWithoutPhotos || 0,
+        count: (statsResponse.stats?.studentsWithoutPhotos || 0) + (statsResponse.stats?.employeesWithoutPhotos || 0),
         total: statsResponse.stats?.totalPeople || 0,
         hasPending: (statsResponse.stats?.studentsWithoutPhotos + statsResponse.stats?.employeesWithoutPhotos) > 0
       });
@@ -892,107 +971,76 @@ const BulkPhotoUploadComponent = ({ organizationId, onComplete }) => {
   };
 
   const handleUpload = async () => {
-    // Validation 1: Check if organization is selected
     if (!organizationId) {
       toast.error('Please select an organization first');
       return;
     }
 
-    // Validation 2: Check if there are students without photos
     if (!studentsWithoutPhotos?.hasPending) {
-      toast.error('All students and employees in this organization already have photos! No photos to upload.');
+      toast.error('All students and employees in this organization already have photos!');
       return;
     }
 
-    // Validation 3: Check if ZIP file is selected
     if (!photoZipFile) {
       toast.error('Please select a ZIP file containing photos');
       return;
     }
 
-    // Validation 4: Warn about file size
     if (photoZipFile.size > 100 * 1024 * 1024) {
       toast.error('ZIP file too large! Maximum size is 100MB');
       return;
     }
 
-    // Confirmation dialog with details
-    const confirmed = window.confirm(
-      `📸 Bulk Photo Upload\n\n` +
-      `Organization: ${selectedOrg?.name || 'Selected'}\n` +
-      `Students/Employees without photos: ${studentsWithoutPhotos.count}\n` +
-      `Photos in ZIP: Will be matched by ID\n\n` +
-      `⚠️ Important:\n` +
-      `• Photos will be matched by student_id/employeeId\n` +
-      `• Only students without photos will be updated\n` +
-      `• Existing photos will NOT be replaced\n` +
-      `• Unmatched photos will be skipped\n\n` +
-      `Continue with upload?`
-    );
-
-    if (!confirmed) return;
-
     setUploading(true);
-    setShowProgress(true);
+    setShowImportProgress(true);
     resetProgress();
-    setUploadResults(null);
+
+    // Generate import ID and subscribe FIRST
+    const tempImportId = `photo-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+    if (unsubscribeRef.current) {
+      unsubscribeRef.current();
+    }
+    unsubscribeRef.current = subscribeToImport(tempImportId, 'bulk-photo');
 
     try {
       const formData = new FormData();
       formData.append('photoZip', photoZipFile);
       formData.append('organizationId', organizationId);
+      formData.append('importId', tempImportId);
 
       const response = await studentAPI.bulkUploadPhotos(formData);
 
-      if (response.importId) {
-        subscribeToImport(response.importId, 'bulk-photo');
-      }
-
       if (response.success) {
         setUploadResults(response.results);
-
-        // Show detailed toast message
-        const { uploaded, skipped, failed } = response.results;
-        if (uploaded > 0) {
-          toast.success(`✅ Successfully uploaded ${uploaded} photos!`);
-        }
-        if (skipped?.length > 0) {
-          toast.warning(`⚠️ ${skipped.length} photos were skipped (no matching student or already has photo)`);
-        }
-        if (failed > 0) {
-          toast.error(`❌ ${failed} photos failed to upload`);
-        }
-
-        // Refresh the student list to update photo status
+        toast.success(`✅ Successfully uploaded ${response.results?.uploaded || 0} photos!`);
         if (onComplete) onComplete();
-
-        // Refresh stats
         fetchStudentsWithoutPhotos();
       } else {
         toast.error(response.error || 'Upload failed');
-        setShowProgress(false);
+        setShowImportProgress(false);
       }
     } catch (error) {
       console.error('Bulk upload error:', error);
       toast.error(error.response?.data?.error || 'Upload failed');
-      setShowProgress(false);
+      setShowImportProgress(false);
     } finally {
       setUploading(false);
-      // Don't reset the ZIP file immediately - let user see results first
     }
   };
 
   const resetForm = () => {
     setPhotoZipFile(null);
     setUploadResults(null);
-    setShowProgress(false);
     resetProgress();
-    // Reset file input
+    if (unsubscribeRef.current) {
+      unsubscribeRef.current();
+      unsubscribeRef.current = null;
+    }
     const fileInput = document.getElementById('bulk-photo-zip');
     if (fileInput) fileInput.value = '';
   };
 
-  // Get warning message based on state
   const getWarningMessage = () => {
     if (!organizationId) {
       return { type: 'warning', message: 'Please select an organization first to see photo status.' };
@@ -1020,7 +1068,6 @@ const BulkPhotoUploadComponent = ({ organizationId, onComplete }) => {
 
   return (
     <div className="space-y-4">
-      {/* Info Banner */}
       <div className="bg-blue-50 border border-blue-200 rounded-xl p-3">
         <h4 className="text-sm font-semibold text-blue-800 mb-2 flex items-center gap-2">
           <i className="pi pi-info-circle"></i> How It Works
@@ -1034,7 +1081,6 @@ const BulkPhotoUploadComponent = ({ organizationId, onComplete }) => {
         </ul>
       </div>
 
-      {/* Status Banner */}
       {warning && (
         <div className={`rounded-xl p-3 ${warning.type === 'warning' ? 'bg-amber-50 border border-amber-200' :
           warning.type === 'success' ? 'bg-green-50 border border-green-200' :
@@ -1067,7 +1113,6 @@ const BulkPhotoUploadComponent = ({ organizationId, onComplete }) => {
         </div>
       )}
 
-      {/* File Upload Section - Disabled if no pending students */}
       <div className={`border-2 border-dashed rounded-xl p-4 text-center transition-colors ${!studentsWithoutPhotos?.hasPending && studentsWithoutPhotos?.total > 0
         ? 'border-green-300 bg-green-50/30 cursor-not-allowed opacity-60'
         : !organizationId || studentsWithoutPhotos?.total === 0
@@ -1106,7 +1151,6 @@ const BulkPhotoUploadComponent = ({ organizationId, onComplete }) => {
         </label>
       </div>
 
-      {/* Upload Button with conditions */}
       <button
         onClick={handleUpload}
         disabled={
@@ -1133,20 +1177,6 @@ const BulkPhotoUploadComponent = ({ organizationId, onComplete }) => {
         )}
       </button>
 
-      {/* Progress Modal */}
-      <BulkImportProgressModal
-        isOpen={showProgress}
-        onClose={() => {
-          setShowProgress(false);
-          resetProgress();
-          // Refresh stats when closing
-          fetchStudentsWithoutPhotos();
-        }}
-        progress={progress}
-        type="photo"
-      />
-
-      {/* Results Section */}
       {uploadResults && (
         <div className="mt-4 space-y-3 border-t pt-4">
           <h4 className="font-semibold text-slate-800 text-sm">Upload Results</h4>
@@ -1195,7 +1225,6 @@ const BulkPhotoUploadComponent = ({ organizationId, onComplete }) => {
             </details>
           )}
 
-          {/* Reset button after completion */}
           {uploadResults && (
             <button
               onClick={resetForm}

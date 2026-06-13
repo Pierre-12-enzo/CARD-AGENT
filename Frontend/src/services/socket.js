@@ -116,6 +116,26 @@ export const disconnectSocket = () => {
     }
 };
 
+export const waitForSocketConnection = (maxWaitMs = 5000) => {
+    return new Promise((resolve, reject) => {
+        if (socket && socket.connected) {
+            resolve(socket);
+            return;
+        }
+
+        const startTime = Date.now();
+        const checkInterval = setInterval(() => {
+            if (socket && socket.connected) {
+                clearInterval(checkInterval);
+                resolve(socket);
+            } else if (Date.now() - startTime > maxWaitMs) {
+                clearInterval(checkInterval);
+                reject(new Error('Socket connection timeout'));
+            }
+        }, 100);
+    });
+};
+
 export const getSocket = () => socket;
 export const isSocketConnected = () => socket && socket.connected;
 export const reconnectSocket = (token) => {
