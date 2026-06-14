@@ -8,6 +8,48 @@ const Template = require('../models/Template');
 const School = require('../models/School');
 const authMiddleware = require('../middleware/authMiddleware');
 
+
+async function uploadTemplateToCloudinary(buffer, side, mimeType) {
+  const maxRetries = 3;
+  let lastError;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      console.log(`🔄 Template upload attempt ${attempt}/${maxRetries} for ${side}`);
+
+      const uploadResult = await cloudinary.uploader.upload(
+        `data:${mimeType};base64,${buffer.toString('base64')}`,
+        {
+          folder: `card-agent/templates/${side}`,
+          public_id: `${side}-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+          overwrite: true,
+          // Use simple params instead of transformation array
+          width: 1200,
+          height: 800,
+          crop: "limit",
+          quality: "auto",
+          timeout: 30000
+        }
+      );
+
+      console.log(`✅ Uploaded ${side} template: ${uploadResult.public_id}`);
+      return uploadResult;
+
+    } catch (error) {
+      lastError = error;
+      console.log(`⚠️ Upload attempt ${attempt} failed for ${side}: ${error.message}`);
+
+      if (attempt < maxRetries) {
+        const delay = Math.pow(2, attempt) * 1000;
+        console.log(`⏳ Waiting ${delay / 1000}s before retry...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+  }
+
+  throw lastError;
+}
+
 router.use(authMiddleware);
 
 cloudinary.config({
@@ -635,28 +677,9 @@ router.get('/preview/:id', async (req, res) => {
 });
 
 async function uploadToCloudinary(file, side) {
-  try {
-    // Convert buffer to base64
-    const base64String = file.buffer.toString('base64');
-    const dataUri = `data:${file.mimetype};base64,${base64String}`;
-
-    // Upload without complex transformations
-    const result = await cloudinary.uploader.upload(dataUri, {
-      folder: `card-agent/templates/${side}`,
-      public_id: `${side}-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
-      // Simple parameters instead of transformation array
-      width: 1200,
-      height: 800,
-      crop: "limit"
-    });
-
-    console.log(`✅ Uploaded ${side} side:`, result.public_id);
-    return result;
-
-  } catch (error) {
-    console.error(`❌ Failed to upload ${side} side:`, error.message);
-    throw error;
-  }
+  const mimeType = file.mimetype;
+  const buffer = file.buffer;
+  return await uploadTemplateToCloudinary(buffer, side, mimeType);
 }
 
 module.exports = router;
