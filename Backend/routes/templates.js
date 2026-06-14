@@ -8,6 +8,7 @@ const Template = require('../models/Template');
 const School = require('../models/School');
 const authMiddleware = require('../middleware/authMiddleware');
 
+const UNSIGNED_PRESET = 'card_agent_unsigned';
 
 async function uploadTemplateToCloudinary(buffer, side, mimeType) {
   const maxRetries = 3;
@@ -677,9 +678,39 @@ router.get('/preview/:id', async (req, res) => {
 });
 
 async function uploadToCloudinary(file, side) {
-  const mimeType = file.mimetype;
-  const buffer = file.buffer;
-  return await uploadTemplateToCloudinary(buffer, side, mimeType);
+  const maxRetries = 3;
+  let lastError;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      console.log(`🔄 Template upload attempt ${attempt}/${maxRetries} for ${side}`);
+
+      const base64String = file.buffer.toString('base64');
+      const dataUri = `data:${file.mimetype};base64,${base64String}`;
+
+      // ✅ USE UNSIGNED PRESET
+      const uploadResult = await cloudinary.uploader.upload(dataUri, {
+        upload_preset: UNSIGNED_PRESET,
+        public_id: `${side}-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`
+      });
+
+      console.log(`✅ Uploaded ${side} template: ${uploadResult.public_id}`);
+      return uploadResult;
+
+    } catch (error) {
+      lastError = error;
+      console.log(`⚠️ Upload attempt ${attempt} failed for ${side}: ${error.message}`);
+
+      if (attempt < maxRetries) {
+        const delay = Math.pow(2, attempt) * 1000;
+        console.log(`⏳ Waiting ${delay / 1000}s before retry...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+  }
+
+  throw lastError;
 }
+
 
 module.exports = router;
