@@ -1,10 +1,10 @@
-// utilis/cloudinaryUpload.js - COMPLETE FIXED VERSION
+// utilis/cloudinaryUpload.js - USING CLOUDINARY SDK (SIGNED)
 const cloudinary = require('cloudinary').v2;
 const JSZip = require('jszip');
 const path = require('path');
-const fetch = require('node-fetch');
+const { Readable } = require('stream');
 
-// Cloudinary config (still needed for URL generation)
+// Configure Cloudinary with your credentials
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
@@ -12,11 +12,32 @@ cloudinary.config({
   secure: true
 });
 
-// Your unsigned preset name
-const UNSIGNED_PRESET = 'card_agent_unsigned';
+// Test the configuration
+console.log('📸 Cloudinary configured with:', {
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY ? 'Present' : 'Missing',
+  api_secret: process.env.CLOUDINARY_API_SECRET ? 'Present' : 'Missing'
+});
 
 /**
- * Extract photos from ZIP and upload to Cloudinary
+ * Sanitize filename - remove any characters that could cause issues
+ */
+function sanitizeFilename(filename) {
+  // Remove any path separators
+  let clean = filename.replace(/[\/\\]/g, '_');
+  // Remove any other problematic characters
+  clean = clean.replace(/[^a-zA-Z0-9_-]/g, '_');
+  // Ensure it doesn't start with special character
+  clean = clean.replace(/^[_-]+/, '');
+  // Limit length
+  if (clean.length > 50) {
+    clean = clean.substring(0, 50);
+  }
+  return clean;
+}
+
+/**
+ * Extract photos from ZIP and upload to Cloudinary using SDK
  */
 async function extractAndUploadPhotosToCloudinary(zipBuffer) {
   const photoCloudinaryMap = {};
@@ -28,7 +49,7 @@ async function extractAndUploadPhotosToCloudinary(zipBuffer) {
     console.log(`📦 Processing ZIP with ${Object.keys(zipData.files).length} items`);
 
     const files = Object.entries(zipData.files).filter(([fileName, file]) =>
-      !file.dir && fileName.match(/\.(jpg|jpeg|png|gif|bmp)$/i)
+      !file.dir && fileName.match(/\.(jpg|jpeg|png|gif|bmp|webp)$/i)
     );
 
     console.log(`🎯 Found ${files.length} image files in ZIP`);
@@ -37,11 +58,13 @@ async function extractAndUploadPhotosToCloudinary(zipBuffer) {
       const [fileName, file] = files[i];
 
       try {
-        const baseName = path.basename(fileName);
-        const studentId = path.parse(baseName).name;
+        // Get the student ID from filename (without extension)
+        const baseNameWithExt = path.basename(fileName);
+        const studentIdRaw = path.parse(baseNameWithExt).name;
+        const studentId = sanitizeFilename(studentIdRaw);
 
         if (!studentId || studentId.length < 2) {
-          console.warn(`⚠️ Skipping invalid filename: ${fileName}`);
+          console.warn(`⚠️ Skipping invalid filename: ${fileName} -> cleaned to: ${studentId}`);
           continue;
         }
 
@@ -54,7 +77,35 @@ async function extractAndUploadPhotosToCloudinary(zipBuffer) {
 
         console.log(`📸 Processing photo ${i + 1}/${files.length}: ${studentId} (${(fileBuffer.length / 1024).toFixed(1)}KB)`);
 
-        const uploadResult = await uploadToCloudinaryWithRetry(fileBuffer, studentId);
+        // ✅ Use Cloudinary SDK with buffer stream
+        const uploadResult = await new Promise((resolve, reject) => {
+          const uploadStream = cloudinary.uploader.upload_stream(
+            {
+              folder: 'card-agent/people/bulk-photos',
+              public_id: `student_${studentId}_${Date.now()}`,
+              overwrite: true,
+              transformation: [
+                { width: 500, height: 500, crop: "fill", gravity: "face" },
+                { quality: "auto:good" },
+                { fetch_format: "auto" }
+              ]
+            },
+            (error, result) => {
+              if (error) {
+                console.error('Cloudinary SDK error:', error);
+                reject(error);
+              } else {
+                resolve(result);
+              }
+            }
+          );
+
+          // Create a readable stream from buffer and pipe to Cloudinary
+          const readableStream = new Readable();
+          readableStream.push(fileBuffer);
+          readableStream.push(null);
+          readableStream.pipe(uploadStream);
+        });
 
         photoCloudinaryMap[studentId] = {
           secure_url: uploadResult.secure_url,
@@ -65,8 +116,11 @@ async function extractAndUploadPhotosToCloudinary(zipBuffer) {
           bytes: uploadResult.bytes
         };
 
+        console.log(`✅ Successfully uploaded: ${studentId} -> ${uploadResult.secure_url}`);
+
+        // Small delay between uploads to avoid rate limits
         if (i < files.length - 1) {
-          await new Promise(resolve => setTimeout(resolve, 300));
+          await new Promise(resolve => setTimeout(resolve, 500));
         }
 
       } catch (error) {
@@ -84,68 +138,42 @@ async function extractAndUploadPhotosToCloudinary(zipBuffer) {
 }
 
 /**
- * Upload image to Cloudinary using fetch API (unsigned preset)
+ * Upload single photo to Cloudinary
  */
-async function uploadToCloudinaryWithRetry(buffer, studentId, maxRetries = 3) {
-  let lastError;
+async function uploadSinglePhotoToCloudinary(fileBuffer, studentId) {
+  try {
+    const cleanId = sanitizeFilename(studentId);
 
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      console.log(`🔄 Cloudinary upload attempt ${attempt}/${maxRetries} for ${studentId}`);
-
-      // Convert buffer to base64
-      const base64String = buffer.toString('base64');
-
-      // Simple JSON payload
-      const payload = {
-        file: `data:image/jpeg;base64,${base64String}`,
-        upload_preset: UNSIGNED_PRESET,
-        public_id: `person-${studentId}-${Date.now()}`
-      };
-
-      const response = await fetch(
-        `https://api.cloudinary.com/v1_1/${process.env.CLOUDINARY_CLOUD_NAME}/image/upload`,
+    const result = await new Promise((resolve, reject) => {
+      const uploadStream = cloudinary.uploader.upload_stream(
         {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(payload)
+          folder: 'card-agent/people/photos',
+          public_id: `student_${cleanId}_${Date.now()}`,
+          transformation: [
+            { width: 500, height: 500, crop: "fill", gravity: "face" },
+            { quality: "auto:good" }
+          ]
+        },
+        (error, uploadResult) => {
+          if (error) reject(error);
+          else resolve(uploadResult);
         }
       );
 
-      const result = await response.json();
+      const readableStream = new Readable();
+      readableStream.push(fileBuffer);
+      readableStream.push(null);
+      readableStream.pipe(uploadStream);
+    });
 
-      if (!response.ok) {
-        throw new Error(result.error?.message || 'Upload failed');
-      }
-
-      console.log(`✅ Uploaded ${studentId}: ${result.secure_url}`);
-      return result;
-
-    } catch (error) {
-      lastError = error;
-      console.log(`⚠️ Upload attempt ${attempt} failed for ${studentId}: ${error.message}`);
-
-      if (attempt < maxRetries) {
-        const delay = Math.pow(2, attempt) * 1000;
-        console.log(`⏳ Waiting ${delay / 1000}s before retry...`);
-        await new Promise(resolve => setTimeout(resolve, delay));
-      }
-    }
+    return result;
+  } catch (error) {
+    console.error(`Failed to upload photo for ${studentId}:`, error.message);
+    throw error;
   }
-
-  throw lastError;
-}
-/**
- * Upload single photo to Cloudinary
- */
-async function uploadSinglePhotoToCloudinary(buffer, studentId) {
-  return await uploadToCloudinaryWithRetry(buffer, studentId);
 }
 
 module.exports = {
   extractAndUploadPhotosToCloudinary,
-  uploadToCloudinaryWithRetry,
   uploadSinglePhotoToCloudinary
 };
