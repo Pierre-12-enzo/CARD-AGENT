@@ -1,12 +1,22 @@
-// utilis/cloudinaryUpload.js - CARD-AGENT
+// utilis/cloudinaryUpload.js - COMPLETE FIXED VERSION
 const cloudinary = require('cloudinary').v2;
 const JSZip = require('jszip');
 const path = require('path');
+const fetch = require('node-fetch');
+
+// Cloudinary config (still needed for URL generation)
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+  secure: true
+});
+
+// Your unsigned preset name
+const UNSIGNED_PRESET = 'card_agent_unsigned';
 
 /**
  * Extract photos from ZIP and upload to Cloudinary
- * @param {Buffer} zipBuffer - ZIP file buffer
- * @returns {Promise<Object>} Map of student_id -> Cloudinary data
  */
 async function extractAndUploadPhotosToCloudinary(zipBuffer) {
   const photoCloudinaryMap = {};
@@ -44,13 +54,7 @@ async function extractAndUploadPhotosToCloudinary(zipBuffer) {
 
         console.log(`📸 Processing photo ${i + 1}/${files.length}: ${studentId} (${(fileBuffer.length / 1024).toFixed(1)}KB)`);
 
-        const ext = path.extname(fileName).toLowerCase();
-        let mimeType = 'image/jpeg';
-        if (ext === '.png') mimeType = 'image/png';
-        if (ext === '.gif') mimeType = 'image/gif';
-        if (ext === '.bmp') mimeType = 'image/bmp';
-
-        const uploadResult = await uploadToCloudinaryWithRetry(fileBuffer, studentId, mimeType);
+        const uploadResult = await uploadToCloudinaryWithRetry(fileBuffer, studentId);
 
         photoCloudinaryMap[studentId] = {
           secure_url: uploadResult.secure_url,
@@ -80,30 +84,45 @@ async function extractAndUploadPhotosToCloudinary(zipBuffer) {
 }
 
 /**
- * Upload image to Cloudinary with retry logic
+ * Upload image to Cloudinary using fetch API (unsigned preset)
  */
-async function uploadToCloudinaryWithRetry(buffer, studentId, mimeType, maxRetries = 3) {
+async function uploadToCloudinaryWithRetry(buffer, studentId, maxRetries = 3) {
   let lastError;
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       console.log(`🔄 Cloudinary upload attempt ${attempt}/${maxRetries} for ${studentId}`);
 
-      const uploadResult = await cloudinary.uploader.upload(
-        `data:${mimeType};base64,${buffer.toString('base64')}`,
+      // Convert buffer to base64
+      const base64String = buffer.toString('base64');
+
+      // Simple JSON payload
+      const payload = {
+        file: `data:image/jpeg;base64,${base64String}`,
+        upload_preset: UNSIGNED_PRESET,
+        public_id: `person-${studentId}-${Date.now()}`
+      };
+
+      const response = await fetch(
+        `https://api.cloudinary.com/v1_1/${process.env.CLOUDINARY_CLOUD_NAME}/image/upload`,
         {
-          folder: 'card-agent/people/photos',
-          public_id: `person-${studentId}-${Date.now()}`,
-          overwrite: true,
-          transformation: [
-            { width: 500, height: 500, crop: "fill", gravity: "face" },
-            { quality: "auto:good" }
-          ],
-          timeout: 30000
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(payload)
         }
       );
 
-      return uploadResult;
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error?.message || 'Upload failed');
+      }
+
+      console.log(`✅ Uploaded ${studentId}: ${result.secure_url}`);
+      return result;
+
     } catch (error) {
       lastError = error;
       console.log(`⚠️ Upload attempt ${attempt} failed for ${studentId}: ${error.message}`);
@@ -118,12 +137,11 @@ async function uploadToCloudinaryWithRetry(buffer, studentId, mimeType, maxRetri
 
   throw lastError;
 }
-
 /**
  * Upload single photo to Cloudinary
  */
 async function uploadSinglePhotoToCloudinary(buffer, studentId) {
-  return await uploadToCloudinaryWithRetry(buffer, studentId, 'image/jpeg');
+  return await uploadToCloudinaryWithRetry(buffer, studentId);
 }
 
 module.exports = {
