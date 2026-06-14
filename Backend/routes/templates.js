@@ -415,17 +415,10 @@ router.post('/upload', upload.fields([
     }
 
     // Get template dimensions from uploaded image
-    let originalWidth = null;
-    let originalHeight = null;
-    try {
-      const { loadImage } = require('canvas');
-      const image = await loadImage(frontUpload.secure_url);
-      originalWidth = image.width;
-      originalHeight = image.height;
-      console.log(`📐 Template dimensions: ${originalWidth}x${originalHeight}`);
-    } catch (dimError) {
-      console.warn('Could not get image dimensions:', dimError.message);
-    }
+    // Get dimensions from Cloudinary response (no canvas needed)
+    let originalWidth = frontUpload.width || null;
+    let originalHeight = frontUpload.height || null;
+    console.log(`📐 Template dimensions: ${originalWidth}x${originalHeight}`);
 
     const templateData = {
       name,
