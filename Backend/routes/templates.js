@@ -14,7 +14,9 @@ cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET,
+  signature_algorithm: 'sha1',
   secure: true
+
 });
 
 const storage = multer.memoryStorage();
@@ -633,16 +635,28 @@ router.get('/preview/:id', async (req, res) => {
 });
 
 async function uploadToCloudinary(file, side) {
-  const base64String = file.buffer.toString('base64');
-  const dataUri = `data:${file.mimetype};base64,${base64String}`;
-  return await cloudinary.uploader.upload(dataUri, {
-    folder: `card-agent/templates/${side}`,
-    public_id: `${side}-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
-    transformation: [
-      { width: 1200, height: 800, crop: "limit" },
-      { quality: "auto:good" }
-    ]
-  });
+  try {
+    // Convert buffer to base64
+    const base64String = file.buffer.toString('base64');
+    const dataUri = `data:${file.mimetype};base64,${base64String}`;
+
+    // Upload without complex transformations
+    const result = await cloudinary.uploader.upload(dataUri, {
+      folder: `card-agent/templates/${side}`,
+      public_id: `${side}-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+      // Simple parameters instead of transformation array
+      width: 1200,
+      height: 800,
+      crop: "limit"
+    });
+
+    console.log(`✅ Uploaded ${side} side:`, result.public_id);
+    return result;
+
+  } catch (error) {
+    console.error(`❌ Failed to upload ${side} side:`, error.message);
+    throw error;
+  }
 }
 
 module.exports = router;
