@@ -431,7 +431,7 @@ router.post('/upload', upload.fields([
       return res.status(404).json({ success: false, error: 'Organization not found' });
     }
 
-    // Co-worker permission check - FIXED
+    // Co-worker permission check
     if (req.user.role === 'co_worker') {
       if (!req.user.permissions || !Array.isArray(req.user.permissions)) {
         return res.status(403).json({ success: false, error: 'Access denied - No permissions assigned' });
@@ -453,13 +453,13 @@ router.post('/upload', upload.fields([
     const hasBackSide = req.files.backSide && req.files.backSide[0];
     const actualTemplateType = templateType || (hasBackSide ? 'two-sided' : 'single-sided');
 
+    // Upload front side using the retry function
     const frontUpload = await uploadToCloudinary(frontFile, 'front');
     if (!frontUpload || !frontUpload.secure_url) {
       throw new Error('Failed to upload front side');
     }
 
-    // Get template dimensions from uploaded image
-    // Get dimensions from Cloudinary response (no canvas needed)
+    // Get dimensions from upload result
     let originalWidth = frontUpload.width || null;
     let originalHeight = frontUpload.height || null;
     console.log(`📐 Template dimensions: ${originalWidth}x${originalHeight}`);
@@ -480,7 +480,7 @@ router.post('/upload', upload.fields([
         width: originalWidth,
         height: originalHeight
       },
-      fields: getDefaultFields(actualTemplateType),
+      fields: getDefaultFields(defaultPersonType || 'student'),
       originalWidth: originalWidth,
       originalHeight: originalHeight,
       isDefault: setAsDefault === 'true' || setAsDefault === true
