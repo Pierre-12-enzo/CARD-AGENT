@@ -685,17 +685,30 @@ async function uploadToCloudinary(file, side) {
     try {
       console.log(`🔄 Template upload attempt ${attempt}/${maxRetries} for ${side}`);
 
-      const base64String = file.buffer.toString('base64');
-      const dataUri = `data:${file.mimetype};base64,${base64String}`;
+      // Create FormData
+      const formData = new FormData();
+      const blob = new Blob([file.buffer], { type: file.mimetype });
+      formData.append('file', blob, `${side}-${Date.now()}.jpg`);
+      formData.append('upload_preset', 'card_agent_unsigned');
+      formData.append('public_id', `${side}-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`);
 
-      // ✅ USE UNSIGNED PRESET
-      const uploadResult = await cloudinary.uploader.upload(dataUri, {
-        upload_preset: UNSIGNED_PRESET,
-        public_id: `${side}-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`
-      });
+      // Direct fetch to Cloudinary API (NO SDK, NO SIGNATURE)
+      const response = await fetch(
+        `https://api.cloudinary.com/v1_1/${process.env.CLOUDINARY_CLOUD_NAME}/image/upload`,
+        {
+          method: 'POST',
+          body: formData
+        }
+      );
 
-      console.log(`✅ Uploaded ${side} template: ${uploadResult.public_id}`);
-      return uploadResult;
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error?.message || 'Upload failed');
+      }
+
+      console.log(`✅ Uploaded ${side} template: ${result.public_id}`);
+      return result;
 
     } catch (error) {
       lastError = error;
