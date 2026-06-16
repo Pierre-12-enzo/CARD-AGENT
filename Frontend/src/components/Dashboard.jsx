@@ -103,7 +103,7 @@ const Dashboard = () => {
       items.push({ icon: 'pi pi-qrcode', label: 'Cards', path: '/co-worker/cards', show: hasPerm('canGenerateCards') });
       items.push({ icon: 'pi pi-calendar', label: 'Audit Logs', path: '/co-worker/audit-logs', show: hasPerm('canViewAuditLogs') });
       items.push({ icon: 'pi pi-images', label: 'Photos', path: '/co-worker/photos', show: hasPerm('canUploadPhotos') });
-      items.push({ icon: 'pi pi-csv', label: 'CSV Upload', path: '/co-worker/bulk-import', show: hasPerm('canUploadCSV') });
+      items.push({ icon: 'pi pi-file-excel', label: 'CSV Upload', path: '/co-worker/bulk-import', show: hasPerm('canUploadCSV') });
       items.push({ icon: 'pi pi-image', label: 'Templates', path: '/co-worker/templates', show: hasPerm('canManageTemplates') });
 
       return items.filter(i => i.show);
