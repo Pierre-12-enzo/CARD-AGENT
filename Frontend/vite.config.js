@@ -18,11 +18,5 @@ export default defineConfig({
         assetFileNames: 'assets/[name]-[hash].[ext]'
       }
     }
-  },
-  
-  // Optimize for cPanel
-  server: {
-    host: true,
-    port: 5173
   }
 })
