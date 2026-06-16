@@ -272,7 +272,7 @@ const getDefaultFields = (templateType = 'student') => {
         label: "Photo",
         type: "photo",
         requirement: "required",
-        position: { x: 50, y: 230, width: 250, height: 250 },
+        position: { x: 50, y: 230, width: 250, height: 230 },
         styling: photoStyling
       },
       {
@@ -312,7 +312,7 @@ const getDefaultFields = (templateType = 'student') => {
         label: "Gender",
         type: "text",
         requirement: "required",
-        position: { x: 580, y: 375, maxWidth: 300, fontSize: 18, isBold: false, textAlign: "left" },
+        position: { x: 580, y: 375, maxWidth: 300, fontSize: 20, isBold: false, textAlign: "left" },
         dataSource: { sourceType: "student_field", fieldPath: "gender" }
       },
       {
@@ -320,7 +320,7 @@ const getDefaultFields = (templateType = 'student') => {
         label: "Residence",
         type: "text",
         requirement: "required",
-        position: { x: 620, y: 420, maxWidth: 300, fontSize: 18, isBold: false, textAlign: "left" },
+        position: { x: 620, y: 420, maxWidth: 300, fontSize: 20, isBold: false, textAlign: "left" },
         dataSource: { sourceType: "student_field", fieldPath: "residence" }
       },
       {
@@ -328,7 +328,7 @@ const getDefaultFields = (templateType = 'student') => {
         label: "Academic Year",
         type: "text",
         requirement: "required",
-        position: { x: 670, y: 472, maxWidth: 300, fontSize: 18, isBold: false, textAlign: "left" },
+        position: { x: 670, y: 472, maxWidth: 300, fontSize: 20, isBold: false, textAlign: "left" },
         dataSource: { sourceType: "student_field", fieldPath: "studentDetails.academic_year" }
       }
     ];
@@ -340,7 +340,7 @@ const getDefaultFields = (templateType = 'student') => {
         label: "Photo",
         type: "photo",
         requirement: "required",
-        position: { x: 50, y: 230, width: 250, height: 250 },
+        position: { x: 50, y: 230, width: 250, height: 230 },
         styling: photoStyling
       },
       {
@@ -380,7 +380,7 @@ const getDefaultFields = (templateType = 'student') => {
         label: "Gender",
         type: "text",
         requirement: "required",
-        position: { x: 580, y: 375, maxWidth: 300, fontSize: 18, isBold: false, textAlign: "left" },
+        position: { x: 580, y: 375, maxWidth: 300, fontSize: 20, isBold: false, textAlign: "left" },
         dataSource: { sourceType: "employee_field", fieldPath: "gender" }
       },
       {
@@ -388,7 +388,7 @@ const getDefaultFields = (templateType = 'student') => {
         label: "Residence",
         type: "text",
         requirement: "required",
-        position: { x: 620, y: 420, maxWidth: 300, fontSize: 18, isBold: false, textAlign: "left" },
+        position: { x: 620, y: 420, maxWidth: 300, fontSize: 20, isBold: false, textAlign: "left" },
         dataSource: { sourceType: "employee_field", fieldPath: "residence" }
       },
       {
@@ -396,7 +396,7 @@ const getDefaultFields = (templateType = 'student') => {
         label: "Work Phone",
         type: "text",
         requirement: "required",
-        position: { x: 580, y: 420, maxWidth: 300, fontSize: 18, isBold: false, textAlign: "left" },
+        position: { x: 580, y: 420, maxWidth: 300, fontSize: 20, isBold: false, textAlign: "left" },
         dataSource: { sourceType: "employee_field", fieldPath: "employeeDetails.workPhone" }
       }
     ];

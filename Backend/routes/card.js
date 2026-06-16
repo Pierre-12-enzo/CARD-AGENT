@@ -298,7 +298,7 @@ async function generateCardWithDynamicFields(student, template, studentPhotoUrl)
       }
 
       // Handle text fields
-      // Handle text fields - WITH FONT SCALING
+      // Handle text fields - NO FONT SCALING (user sets final size)
       if (field.type === 'text') {
         let textValue = null;
 
@@ -336,24 +336,23 @@ async function generateCardWithDynamicFields(student, template, studentPhotoUrl)
 
         if (!textValue) continue;
 
-        // ✅ SCALE THE FONT SIZE
-        const originalFontSize = field.position.fontSize || 20;
-        const scaledFontSize = Math.max(8, Math.round(originalFontSize * scaleFactor));
+        // ✅ USE FONT SIZE DIRECTLY - NO SCALING
+        const fontSize = Math.max(8, field.position.fontSize || 20);
 
-        console.log(`🔤 Scaling font: ${originalFontSize}px -> ${scaledFontSize}px (scale: ${scaleFactor})`);
+        console.log(`🔤 Using font: ${fontSize}px (user set: ${field.position.fontSize || 20})`);
 
         // Configure text rendering
         ctx.textBaseline = 'top';
         ctx.textAlign = field.position.textAlign || 'left';
-        ctx.font = `${field.position.isBold ? 'bold ' : ''}${scaledFontSize}px Arial`;
+        ctx.font = `${field.position.isBold ? 'bold ' : ''}${fontSize}px Arial`;
         ctx.fillStyle = field.position.fontColor || '#000000';
 
         let displayText = String(textValue).trim();
 
-        // Handle text truncation (also scale maxWidth)
+        // Handle text truncation (maxWidth is already scaled in scaleCoord)
         const maxWidth = scaledPos.maxWidth;
         if (maxWidth) {
-          let currentSize = scaledFontSize;
+          let currentSize = fontSize;
           ctx.font = `${field.position.isBold ? 'bold ' : ''}${currentSize}px Arial`;
           while (currentSize > 8 && ctx.measureText(displayText).width > maxWidth) {
             currentSize--;
@@ -368,7 +367,7 @@ async function generateCardWithDynamicFields(student, template, studentPhotoUrl)
         }
 
         ctx.fillText(displayText, scaledPos.x, scaledPos.y);
-        console.log(`✅ Rendered ${field.label}: "${displayText}" at (${scaledPos.x}, ${scaledPos.y}) with font ${scaledFontSize}px`);
+        console.log(`✅ Rendered ${field.label}: "${displayText}" at (${scaledPos.x}, ${scaledPos.y}) with font ${fontSize}px`);
       }
     }
 
@@ -1567,7 +1566,8 @@ router.get('/template-dimensions/:templateId', async (req, res) => {
   }
 });
 
-// ==================== STUDENT PHOTO UPLOAD - FIXED FOR CO-WORKERS ====================
+
+// ==================== STUDENT PHOTO UPLOAD - FIXED WITH UNSIGNED PRESET ====================
 router.post('/upload-student-photo', authMiddleware, upload.single('photo'), async (req, res) => {
   try {
     const { studentId } = req.body;
@@ -1583,46 +1583,32 @@ router.post('/upload-student-photo', authMiddleware, upload.single('photo'), asy
       return res.status(404).json({ success: false, error: 'Student not found' });
     }
 
-    // ==================== PERMISSION CHECKS ====================
-
-    // SUPER ADMIN - can upload any photo
+    // Permission checks
     if (req.user.role === 'super_admin') {
       // Allow
-    }
-    // ADMIN - can upload photos for their company's students
-    else if (req.user.role === 'admin') {
+    } else if (req.user.role === 'admin') {
       if (student.companyId?.toString() !== req.user.companyId?.toString()) {
         return res.status(403).json({
           success: false,
           error: 'Access denied - Student belongs to different company'
         });
       }
-    }
-    // CO_WORKER - can upload photos only for organizations they have permission for
-    else if (req.user.role === 'co_worker') {
+    } else if (req.user.role === 'co_worker') {
       const hasPermission = req.user.permissions?.some(
         p => p.organizationId?.toString() === student.schoolId?.toString() &&
           p.canUploadPhotos === true
       );
-
-      console.log('🔍 Co-worker permission check:', {
-        schoolId: student.schoolId?.toString(),
-        hasPermission,
-        permissions: req.user.permissions?.map(p => ({ orgId: p.organizationId, canUpload: p.canUploadPhotos }))
-      });
-
       if (!hasPermission) {
         return res.status(403).json({
           success: false,
           error: 'You do not have permission to upload photos for this organization'
         });
       }
-    }
-    else {
+    } else {
       return res.status(403).json({ success: false, error: 'Access denied' });
     }
 
-    // Delete old photo if exists
+    // ✅ FIXED: Delete old photo if exists
     if (student.photo_public_id) {
       try {
         await cloudinary.uploader.destroy(student.photo_public_id);
@@ -1632,17 +1618,35 @@ router.post('/upload-student-photo', authMiddleware, upload.single('photo'), asy
       }
     }
 
-    // Upload new photo
+    // ✅ FIXED: Upload new photo using unsigned preset
     const base64Image = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
-    const uploadResult = await cloudinary.uploader.upload(base64Image, {
-      folder: 'card-agent/people/photos',
-      public_id: `student-${student.student_id || student._id}-${Date.now()}`,
-      overwrite: true,
-      transformation: [
-        { width: 500, height: 500, crop: "fill", gravity: "face" },
-        { quality: "auto:good" }
-      ]
-    });
+
+    const FormData = require('form-data');
+    const fetch = require('node-fetch');
+    const formData = new FormData();
+    formData.append('file', base64Image);
+    formData.append('upload_preset', 'card_agent_unsigned');
+    const studentIdClean = student.student_id || student._id;
+    formData.append('public_id', `student_${studentIdClean}_${Date.now()}`);
+
+    const response = await fetch(
+      `https://api.cloudinary.com/v1_1/${process.env.CLOUDINARY_CLOUD_NAME}/image/upload`,
+      {
+        method: 'POST',
+        body: formData,
+        headers: formData.getHeaders()
+      }
+    );
+
+    const uploadResult = await response.json();
+
+    if (!response.ok || !uploadResult.secure_url) {
+      console.error('❌ Cloudinary upload failed:', uploadResult);
+      return res.status(500).json({
+        success: false,
+        error: uploadResult.error?.message || 'Photo upload failed'
+      });
+    }
 
     console.log('✅ Photo uploaded to Cloudinary:', uploadResult.secure_url);
 
@@ -1659,14 +1663,6 @@ router.post('/upload-student-photo', authMiddleware, upload.single('photo'), asy
     };
 
     await student.save();
-
-    // Also update the student in the database with the new photo URL
-    await Student.findByIdAndUpdate(studentId, {
-      photo_url: uploadResult.secure_url,
-      photo_public_id: uploadResult.public_id,
-      has_photo: true,
-      photo_uploaded_at: new Date()
-    });
 
     res.json({
       success: true,
