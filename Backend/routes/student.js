@@ -68,7 +68,7 @@ const studentPhotoStorage = new CloudinaryStorage({
 
 // Multer upload middleware
 const uploadPhoto = multer({
-  storage: studentPhotoStorage,
+  storage: multer.memoryStorage(),  // ← Changed from CloudinaryStorage
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const allowedTypes = /jpeg|jpg|png/;
@@ -161,7 +161,7 @@ router.get('/', async (req, res) => {
 });
 
 // ============================================
-// CREATE a new student/employee
+// CREATE a new student/employee - FIXED WITH UNSIGNED PRESET
 // ============================================
 router.post('/', uploadPhoto.single('photo'), async (req, res) => {
   try {
@@ -201,17 +201,49 @@ router.post('/', uploadPhoto.single('photo'), async (req, res) => {
       return res.status(404).json({ error: 'Organization not found' });
     }
 
+    // ✅ FIXED: Handle photo upload with unsigned preset
     let photoData = null;
     if (req.file) {
-      photoData = {
-        url: req.file.path,
-        secure_url: req.file.path,
-        public_id: req.file.filename,
-        width: req.file.width,
-        height: req.file.height,
-        bytes: req.file.size,
-        format: req.file.format
-      };
+      try {
+        const base64Image = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
+
+        const FormData = require('form-data');
+        const fetch = require('node-fetch');
+        const formData = new FormData();
+        formData.append('file', base64Image);
+        formData.append('upload_preset', 'card_agent_unsigned');
+        const studentId = data.student_id || 'temp';
+        formData.append('public_id', `student_${studentId}_${Date.now()}`);
+
+        const response = await fetch(
+          `https://api.cloudinary.com/v1_1/${process.env.CLOUDINARY_CLOUD_NAME}/image/upload`,
+          {
+            method: 'POST',
+            body: formData,
+            headers: formData.getHeaders()
+          }
+        );
+
+        const result = await response.json();
+
+        if (response.ok && result.secure_url) {
+          photoData = {
+            url: result.secure_url,
+            secure_url: result.secure_url,
+            public_id: result.public_id,
+            width: result.width,
+            height: result.height,
+            bytes: result.bytes,
+            format: result.format
+          };
+          console.log('✅ Single photo uploaded:', result.secure_url);
+        } else {
+          console.error('❌ Cloudinary upload failed:', result);
+        }
+      } catch (uploadError) {
+        console.error('❌ Photo upload error:', uploadError.message);
+        // Don't fail the request - proceed without photo
+      }
     }
 
     const personType = data.personType || 'student';
@@ -285,7 +317,7 @@ router.post('/', uploadPhoto.single('photo'), async (req, res) => {
 });
 
 // ============================================
-// UPDATE a student
+// UPDATE a student - FIXED WITH UNSIGNED PRESET
 // ============================================
 router.put('/:id', uploadPhoto.single('photo'), async (req, res) => {
   try {
@@ -332,24 +364,58 @@ router.put('/:id', uploadPhoto.single('photo'), async (req, res) => {
       }
     }
 
+    // ✅ FIXED: Handle photo upload with unsigned preset
     if (req.file) {
-      if (student.photo_public_id) {
-        try {
-          await cloudinary.uploader.destroy(student.photo_public_id);
-        } catch (deleteError) {
-          console.warn('⚠️ Could not delete old photo:', deleteError.message);
+      try {
+        // Delete old photo if exists
+        if (student.photo_public_id) {
+          try {
+            await cloudinary.uploader.destroy(student.photo_public_id);
+          } catch (deleteError) {
+            console.warn('⚠️ Could not delete old photo:', deleteError.message);
+          }
         }
+
+        // Upload new photo using unsigned preset
+        const base64Image = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
+
+        const FormData = require('form-data');
+        const fetch = require('node-fetch');
+        const formData = new FormData();
+        formData.append('file', base64Image);
+        formData.append('upload_preset', 'card_agent_unsigned');
+        const studentId = student.student_id || student._id;
+        formData.append('public_id', `student_${studentId}_${Date.now()}`);
+
+        const response = await fetch(
+          `https://api.cloudinary.com/v1_1/${process.env.CLOUDINARY_CLOUD_NAME}/image/upload`,
+          {
+            method: 'POST',
+            body: formData,
+            headers: formData.getHeaders()
+          }
+        );
+
+        const result = await response.json();
+
+        if (response.ok && result.secure_url) {
+          update.photo_url = result.secure_url;
+          update.photo_public_id = result.public_id;
+          update.photo_metadata = {
+            width: result.width,
+            height: result.height,
+            format: result.format,
+            bytes: result.bytes
+          };
+          update.has_photo = true;
+          update.photo_uploaded_at = new Date();
+          console.log('✅ Updated photo:', result.secure_url);
+        } else {
+          console.error('❌ Cloudinary upload failed:', result);
+        }
+      } catch (uploadError) {
+        console.error('❌ Photo upload error:', uploadError.message);
       }
-      update.photo_url = req.file.path;
-      update.photo_public_id = req.file.filename;
-      update.photo_metadata = {
-        width: req.file.width,
-        height: req.file.height,
-        format: req.file.format,
-        bytes: req.file.size
-      };
-      update.has_photo = true;
-      update.photo_uploaded_at = new Date();
     }
 
     const updatedStudent = await Student.findByIdAndUpdate(id, update, { new: true, runValidators: true });
