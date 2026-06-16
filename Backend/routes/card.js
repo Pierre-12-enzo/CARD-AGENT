@@ -1540,7 +1540,12 @@ router.get('/template-dimensions/:templateId', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Template has no image' });
     }
 
-    const templateImage = await loadImageFromUrl(template.frontSide.secure_url);
+    try {
+      templateImage = await loadImageFromUrl(template.frontSide.secure_url, 3, 30000);
+    } catch (loadError) {
+      console.error('❌ Failed to load template image after retries:', loadError.message);
+      throw new Error(`Failed to load template image: ${loadError.message}`);
+    }
     const originalDimensions = { width: templateImage.width, height: templateImage.height };
 
     const TARGET_WIDTH = 850;
