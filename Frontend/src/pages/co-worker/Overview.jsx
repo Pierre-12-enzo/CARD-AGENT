@@ -1,19 +1,37 @@
-// pages/co-worker/Overview.jsx - ENHANCED WITH PER-ORGANIZATION PERMISSIONS
+// pages/co-worker/Overview.jsx - ENHANCED WITH PROFESSIONAL QUICK STATS & CHARTS
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { Link, useNavigate } from 'react-router-dom';
 import { studentAPI, cardAPI, organizationAPI } from '../../services/api';
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+  AreaChart,
+  Area
+} from 'recharts';
 
 const CoWorkerOverview = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [time, setTime] = useState(new Date());
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [stats, setStats] = useState({
     assignedOrgs: [],
     totalStudents: 0,
     totalCards: 0,
-    recentActivity: []
+    recentActivity: [],
+    cardsByType: { batch: 0, single: 0 },
+    dailyStats: []
   });
   const [orgStats, setOrgStats] = useState({});
 
@@ -23,9 +41,11 @@ const CoWorkerOverview = () => {
     return () => clearInterval(timer);
   }, []);
 
-  const fetchOverview = async () => {
+  const fetchOverview = async (isRefreshing = false) => {
+    if (isRefreshing) setRefreshing(true);
+    else setLoading(true);
+
     try {
-      setLoading(true);
       const perms = user?.permissions || [];
 
       // Get stats for each assigned org
@@ -34,7 +54,6 @@ const CoWorkerOverview = () => {
           const res = await studentAPI.getByOrganization(perm.organizationId, { limit: 1 });
           const totalPeople = res?.pagination?.total || 0;
 
-          // Get organization details
           const orgRes = await organizationAPI.getById(perm.organizationId);
           const orgName = orgRes.success ? orgRes.organization?.name : perm.organizationName || 'Unknown';
 
@@ -56,12 +75,44 @@ const CoWorkerOverview = () => {
 
       const totalStudents = orgStatsData.reduce((sum, o) => sum + o.totalPeople, 0);
 
-      // Cards count
+      // Cards count - get both total and breakdown
       let totalCards = 0;
+      let batchGenerations = 0;
+      let singleGenerations = 0;
+      let dailyStats = [];
+      let successfulCards = 0;
+      let failedCards = 0;
+      let uniquePeopleCount = 0;
+      let successRate = 0;
+
       try {
-        const cardsRes = await cardAPI.getCardHistory();
-        totalCards = cardsRes?.statistics?.totalCards || 0;
-      } catch (e) { }
+        const cardsRes = await cardAPI.getCardStatistics();
+        if (cardsRes.success) {
+          totalCards = cardsRes.stats?.totalCards || 0;
+          batchGenerations = cardsRes.stats?.batchGenerations || 0;
+          singleGenerations = cardsRes.stats?.singleGenerations || 0;
+          successfulCards = cardsRes.stats?.successfulCards || 0;
+          failedCards = cardsRes.stats?.failedCards || 0;
+          uniquePeopleCount = cardsRes.stats?.uniquePeopleCount || 0;
+          dailyStats = cardsRes.dailyStats || [];
+
+          successRate = totalCards > 0
+            ? Math.round((successfulCards / totalCards) * 100)
+            : 0;
+        }
+      } catch (e) {
+        console.warn('Could not fetch card stats:', e);
+      }
+
+      // Format daily stats for charts
+      const formattedDailyStats = dailyStats.slice(-7).map(day => ({
+        ...day,
+        date: day._id || day.date || 'N/A',
+        displayDate: day._id ? day._id.slice(5) : (day.date ? day.date.slice(5) : 'N/A'),
+        batch: day.batch || 0,
+        single: day.single || 0,
+        total: day.total || 0
+      }));
 
       // Build activity based on actual permissions
       const activity = [];
@@ -81,6 +132,24 @@ const CoWorkerOverview = () => {
         icon: 'pi-users',
         color: 'slate'
       });
+
+      if (totalCards > 0) {
+        activity.push({
+          action: `${totalCards} cards generated`,
+          time: 'Total',
+          icon: 'pi-qrcode',
+          color: 'purple'
+        });
+
+        if (successRate > 0) {
+          activity.push({
+            action: `${successRate}% success rate`,
+            time: 'Performance',
+            icon: 'pi-chart-line',
+            color: 'green'
+          });
+        }
+      }
 
       // Add permission-based activities
       const hasCardGen = orgStatsData.some(o => o.canGenerateCards);
@@ -107,7 +176,16 @@ const CoWorkerOverview = () => {
         assignedOrgs: orgStatsData,
         totalStudents,
         totalCards,
-        recentActivity: activity
+        recentActivity: activity,
+        cardsByType: {
+          batch: batchGenerations,
+          single: singleGenerations,
+          successful: successfulCards,
+          failed: failedCards,
+          uniquePeople: uniquePeopleCount,
+          successRate: successRate
+        },
+        dailyStats: formattedDailyStats
       });
 
       // Store org-specific stats
@@ -128,8 +206,11 @@ const CoWorkerOverview = () => {
       console.error('Error fetching overview:', error);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
+
+  const refreshData = () => fetchOverview(true);
 
   const permissions = user?.permissions || [];
 
@@ -197,6 +278,12 @@ const CoWorkerOverview = () => {
     return labels[permKey] || permKey;
   };
 
+  // Prepare pie chart data for card types
+  const cardTypeData = [
+    { name: 'Batch', value: stats.cardsByType.batch || 0 },
+    { name: 'Single', value: stats.cardsByType.single || 0 }
+  ];
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-96">
@@ -210,6 +297,14 @@ const CoWorkerOverview = () => {
 
   return (
     <div className="p-4 sm:p-6 space-y-6">
+      {/* Refresh Indicator */}
+      {refreshing && (
+        <div className="fixed top-20 right-4 z-50 bg-red-600 text-white px-4 py-2 rounded-xl shadow-lg flex items-center space-x-2 animate-slide-down">
+          <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+          <span className="text-sm">Refreshing...</span>
+        </div>
+      )}
+
       {/* Welcome Section */}
       <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-slate-900 via-slate-800 to-red-900 p-6 text-white">
         <div className="relative z-10">
@@ -234,6 +329,13 @@ const CoWorkerOverview = () => {
                 <i className="pi pi-calendar mr-1"></i>
                 {time.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
               </p>
+              <button
+                onClick={refreshData}
+                className="mt-2 text-xs text-slate-300 hover:text-white transition-colors flex items-center gap-1"
+              >
+                <i className="pi pi-refresh text-xs"></i>
+                Refresh
+              </button>
             </div>
           </div>
         </div>
@@ -249,7 +351,238 @@ const CoWorkerOverview = () => {
         <StatCard title="Total Records" value={stats.totalStudents} icon="pi-users" color="red" subtitle="Under your access" />
       </div>
 
-      {/* Two Column Layout */}
+      {/* Professional Quick Stats Section */}
+      <div className="bg-white rounded-2xl shadow-lg border border-slate-200/50 p-6">
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h3 className="text-lg font-bold text-slate-800">Your Quick Statistics</h3>
+            <p className="text-xs text-slate-500">Real-time overview of your card generation activity</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded-full flex items-center gap-1">
+              <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></span>
+              Live
+            </span>
+          </div>
+        </div>
+
+        {/* Quick Stats Grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {/* Total Cards */}
+          <div className="bg-gradient-to-br from-purple-50 to-purple-100/50 rounded-xl p-4 border border-purple-200/50 hover:border-purple-300 transition-all">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 bg-purple-600 rounded-lg flex items-center justify-center">
+                  <i className="pi pi-qrcode text-white text-sm"></i>
+                </div>
+                <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Cards</span>
+              </div>
+              <span className="text-xs font-bold text-purple-600">{stats.cardsByType.successRate}%</span>
+            </div>
+            <div className="flex items-end justify-between">
+              <div>
+                <p className="text-2xl font-bold text-slate-800">{stats.totalCards}</p>
+                <p className="text-xs text-slate-500">
+                  <span className="text-green-600">{stats.cardsByType.successful}</span> successful •
+                  <span className="text-red-500 ml-1">{stats.cardsByType.failed}</span> failed
+                </p>
+              </div>
+              <div className="flex items-center gap-1">
+                <span className="text-xs font-medium text-purple-600">{stats.cardsByType.uniquePeople}</span>
+                <i className="pi pi-users text-purple-500 text-xs"></i>
+              </div>
+            </div>
+          </div>
+
+          {/* Generation Type */}
+          <div className="bg-gradient-to-br from-blue-50 to-blue-100/50 rounded-xl p-4 border border-blue-200/50 hover:border-blue-300 transition-all">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
+                  <i className="pi pi-chart-bar text-white text-sm"></i>
+                </div>
+                <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Generation</span>
+              </div>
+              <span className="text-xs font-bold text-blue-600">Types</span>
+            </div>
+            <div className="flex items-end justify-between">
+              <div>
+                <p className="text-2xl font-bold text-slate-800">{stats.cardsByType.batch + stats.cardsByType.single}</p>
+                <p className="text-xs text-slate-500">
+                  <span className="text-blue-600">{stats.cardsByType.batch}</span> batch •
+                  <span className="text-purple-600 ml-1">{stats.cardsByType.single}</span> single
+                </p>
+              </div>
+              <div className="flex gap-1">
+                <span className="w-2 h-2 bg-blue-500 rounded-full"></span>
+                <span className="w-2 h-2 bg-purple-500 rounded-full"></span>
+              </div>
+            </div>
+          </div>
+
+          {/* Organizations */}
+          <div className="bg-gradient-to-br from-slate-50 to-slate-100/50 rounded-xl p-4 border border-slate-200/50 hover:border-slate-300 transition-all">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 bg-slate-700 rounded-lg flex items-center justify-center">
+                  <i className="pi pi-building text-white text-sm"></i>
+                </div>
+                <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Organizations</span>
+              </div>
+              <span className="text-xs font-bold text-slate-400">{stats.assignedOrgs.length}</span>
+            </div>
+            <div className="flex items-end justify-between">
+              <div>
+                <p className="text-2xl font-bold text-slate-800">{stats.assignedOrgs.length}</p>
+                <p className="text-xs text-slate-500">
+                  <span className="text-blue-600">{stats.assignedOrgs.filter(o => o.type !== 'corporate').length}</span> schools •
+                  <span className="text-purple-600 ml-1">{stats.assignedOrgs.filter(o => o.type === 'corporate').length}</span> corporate
+                </p>
+              </div>
+              <div className="flex gap-1">
+                <span className="w-2 h-2 bg-blue-500 rounded-full"></span>
+                <span className="w-2 h-2 bg-purple-500 rounded-full"></span>
+              </div>
+            </div>
+          </div>
+
+          {/* People */}
+          <div className="bg-gradient-to-br from-amber-50 to-amber-100/50 rounded-xl p-4 border border-amber-200/50 hover:border-amber-300 transition-all">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 bg-amber-600 rounded-lg flex items-center justify-center">
+                  <i className="pi pi-users text-white text-sm"></i>
+                </div>
+                <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">People</span>
+              </div>
+              <span className="text-xs font-bold text-amber-600">{stats.totalStudents}</span>
+            </div>
+            <div className="flex items-end justify-between">
+              <div>
+                <p className="text-2xl font-bold text-slate-800">{stats.totalStudents}</p>
+                <p className="text-xs text-slate-500">
+                  Under your management
+                </p>
+              </div>
+              <div className="flex items-center gap-1">
+                <i className="pi pi-users text-amber-500 text-xs"></i>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Additional Stats - Compact Row */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
+          <div className="bg-slate-50 rounded-lg p-3 text-center border border-slate-200/50">
+            <p className="text-xs text-slate-500">Batch Generations</p>
+            <p className="text-lg font-bold text-blue-600">{stats.cardsByType.batch}</p>
+            <p className="text-[10px] text-slate-400">Multiple cards per batch</p>
+          </div>
+          <div className="bg-slate-50 rounded-lg p-3 text-center border border-slate-200/50">
+            <p className="text-xs text-slate-500">Single Generations</p>
+            <p className="text-lg font-bold text-purple-600">{stats.cardsByType.single}</p>
+            <p className="text-[10px] text-slate-400">Individual cards</p>
+          </div>
+          <div className="bg-slate-50 rounded-lg p-3 text-center border border-slate-200/50">
+            <p className="text-xs text-slate-500">Unique People</p>
+            <p className="text-lg font-bold text-green-600">{stats.cardsByType.uniquePeople || 0}</p>
+            <p className="text-[10px] text-slate-400">with cards generated</p>
+          </div>
+          <div className="bg-slate-50 rounded-lg p-3 text-center border border-slate-200/50">
+            <p className="text-xs text-slate-500">Success Rate</p>
+            <p className="text-lg font-bold text-emerald-600">{stats.cardsByType.successRate || 0}%</p>
+            <p className="text-[10px] text-slate-400">of cards successful</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Charts Row */}
+      {stats.dailyStats.length > 0 && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Daily Generation Trend */}
+          <div className="lg:col-span-2 bg-white rounded-2xl shadow-lg border border-slate-200/50 p-6">
+            <div className="flex items-center justify-between mb-5">
+              <div>
+                <h3 className="text-lg font-bold text-slate-800">Daily Card Generation</h3>
+                <p className="text-xs text-slate-500">Last 7 days trend</p>
+              </div>
+              <i className="pi pi-chart-line text-red-500 text-lg"></i>
+            </div>
+            <ResponsiveContainer width="100%" height={200}>
+              <AreaChart data={stats.dailyStats}>
+                <defs>
+                  <linearGradient id="coColorTotal" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#dc2626" stopOpacity={0.8} />
+                    <stop offset="95%" stopColor="#dc2626" stopOpacity={0.1} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                <XAxis dataKey="displayDate" stroke="#94a3b8" fontSize={11} />
+                <YAxis stroke="#94a3b8" fontSize={11} />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: 'white',
+                    border: '1px solid #e2e8f0',
+                    borderRadius: '8px',
+                    padding: '8px 12px'
+                  }}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="total"
+                  stroke="#dc2626"
+                  strokeWidth={2}
+                  fillOpacity={1}
+                  fill="url(#coColorTotal)"
+                  name="Cards Generated"
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* Card Type Distribution - Pie Chart */}
+          {(stats.cardsByType.batch > 0 || stats.cardsByType.single > 0) && (
+            <div className="bg-white rounded-2xl shadow-lg border border-slate-200/50 p-6">
+              <div className="flex items-center justify-between mb-5">
+                <div>
+                  <h3 className="text-lg font-bold text-slate-800">Generation Type</h3>
+                  <p className="text-xs text-slate-500">Batch vs Single</p>
+                </div>
+                <i className="pi pi-chart-pie text-red-500 text-lg"></i>
+              </div>
+              <ResponsiveContainer width="100%" height={200}>
+                <PieChart>
+                  <Pie
+                    data={cardTypeData}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={50}
+                    outerRadius={80}
+                    paddingAngle={2}
+                    dataKey="value"
+                    label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                    labelLine={false}
+                  >
+                    <Cell fill="#3b82f6" />
+                    <Cell fill="#8b5cf6" />
+                  </Pie>
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: 'white',
+                      border: '1px solid #e2e8f0',
+                      borderRadius: '8px',
+                      padding: '8px 12px'
+                    }}
+                  />
+                  <Legend />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Two Column Layout for Rest */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left Column */}
         <div className="lg:col-span-1 space-y-6">
@@ -361,7 +694,6 @@ const CoWorkerOverview = () => {
               </div>
               <div className="divide-y divide-slate-100">
                 {stats.assignedOrgs.map((org, i) => {
-                  // Get permissions for this org
                   const orgPerms = [];
                   if (org.canManageStudents) orgPerms.push('canManageStudents');
                   if (org.canGenerateCards) orgPerms.push('canGenerateCards');
@@ -389,7 +721,6 @@ const CoWorkerOverview = () => {
                             </span>
                           </div>
 
-                          {/* Stats */}
                           <div className="flex flex-wrap gap-3 mb-3">
                             <div className="flex items-center gap-1 text-sm text-slate-600">
                               <i className="pi pi-users text-xs"></i>
@@ -409,7 +740,6 @@ const CoWorkerOverview = () => {
                             )}
                           </div>
 
-                          {/* Permission Badges */}
                           <div className="flex flex-wrap gap-2">
                             {orgPerms.map(permKey => (
                               <span key={permKey} className={`text-xs px-2 py-1 rounded-full ${getBadgeColor(permKey)}`}>
@@ -420,7 +750,6 @@ const CoWorkerOverview = () => {
                           </div>
                         </div>
 
-                        {/* Action Buttons based on permissions */}
                         <div className="flex gap-2">
                           {org.canGenerateCards && (
                             <button
