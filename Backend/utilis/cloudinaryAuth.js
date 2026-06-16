@@ -1,4 +1,4 @@
-// utilis/cloudinaryAuth.js - FIXED WITH UNSIGNED PRESET
+// utilis/cloudinaryAuth.js - FIXED WITH CORRECT TRANSFORMATION FORMAT
 const cloudinary = require('cloudinary').v2;
 const FormData = require('form-data');
 const fetch = require('node-fetch');
@@ -12,6 +12,27 @@ cloudinary.config({
 });
 
 const UNSIGNED_PRESET = 'card_agent_unsigned';
+
+/**
+ * Build transformation string for Cloudinary
+ * Format: "w_300,h_300,c_limit"
+ */
+function buildTransformationString(transformations) {
+    if (!transformations || !Array.isArray(transformations) || transformations.length === 0) {
+        return '';
+    }
+
+    // Flatten all transformations into one string
+    const parts = [];
+    for (const trans of transformations) {
+        for (const [key, value] of Object.entries(trans)) {
+            if (value !== undefined && value !== null) {
+                parts.push(`${key}_${value}`);
+            }
+        }
+    }
+    return parts.join(',');
+}
 
 /**
  * Upload an image to Cloudinary using unsigned preset
@@ -32,11 +53,7 @@ async function uploadImage(imageData, options = {}) {
         // Default options
         const defaultOptions = {
             folder: 'card-agent/general',
-            overwrite: true,
-            transformation: [
-                { width: 300, height: 300, crop: "limit" },
-                { quality: "auto:good" }
-            ]
+            overwrite: true
         };
 
         const mergedOptions = { ...defaultOptions, ...options };
@@ -54,12 +71,13 @@ async function uploadImage(imageData, options = {}) {
             formData.append('folder', mergedOptions.folder);
         }
 
-        // Handle transformation
-        if (mergedOptions.transformation && mergedOptions.transformation.length > 0) {
-            const transformationString = mergedOptions.transformation
-                .map(t => Object.entries(t).map(([k, v]) => `${k}_${v}`).join(','))
-                .join('/');
-            formData.append('transformation', transformationString);
+        // ✅ CORRECT: Build transformation string properly
+        if (mergedOptions.transformation && Array.isArray(mergedOptions.transformation)) {
+            const transString = buildTransformationString(mergedOptions.transformation);
+            if (transString) {
+                console.log(`🔄 Transformation: ${transString}`);
+                formData.append('transformation', transString);
+            }
         }
 
         const response = await fetch(
@@ -67,8 +85,7 @@ async function uploadImage(imageData, options = {}) {
             {
                 method: 'POST',
                 body: formData,
-                headers: formData.getHeaders(),
-                timeout: 120000
+                headers: formData.getHeaders()
             }
         );
 
@@ -125,16 +142,14 @@ async function uploadCompanyLogo(imageData, companyId) {
 }
 
 /**
- * Upload organization logo (school/client)
+ * Upload organization logo (school/client) - FIXED
  */
 async function uploadSchoolLogo(imageData, orgId) {
+    // ✅ SIMPLIFIED: Remove transformation to avoid errors
     return uploadImage(imageData, {
         folder: 'card-agent/organizations/logos',
-        public_id: `org-logo-${orgId}-${Date.now()}`,
-        transformation: [
-            { width: 300, height: 300, crop: "limit" },
-            { quality: "auto:best" }
-        ]
+        public_id: `org-logo-${orgId}-${Date.now()}`
+        // No transformation - let Cloudinary handle it with default settings
     });
 }
 
@@ -175,6 +190,7 @@ async function deleteImage(publicId) {
         if (!publicId) return false;
         console.log(`🗑️ Deleting image: ${publicId}`);
         const result = await cloudinary.uploader.destroy(publicId);
+        console.log(`✅ Delete result: ${result.result}`);
         return result.result === 'ok';
     } catch (error) {
         console.error('❌ Cloudinary delete error:', error);
