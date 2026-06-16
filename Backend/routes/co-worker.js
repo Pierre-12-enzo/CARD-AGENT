@@ -223,18 +223,6 @@ router.post('/',
             const orgNames = validPermissions.map(p => p.organizationName).join(', ');
             await sendCoWorkerInvite(coWorker, company, req.user, tempPassword);
 
-            await AuditLog.create({
-                action: 'CREATE_STAFF',
-                userId: req.user._id,
-                companyId: targetCompanyId,
-                details: {
-                    staffId: coWorker._id,
-                    staffEmail: coWorker.email,
-                    permissionsCount: validPermissions.length
-                },
-                ipAddress: req.ip,
-                userAgent: req.get('User-Agent')
-            });
 
             res.status(201).json({
                 success: true,
@@ -470,18 +458,6 @@ router.put('/:id',
                 console.log('📧 Email not sent - company not found for co-worker');
             }
 
-            await AuditLog.create({
-                action: 'UPDATE_STAFF',
-                userId: req.user._id,
-                companyId: coWorker.companyId,
-                details: {
-                    staffId: coWorker._id,
-                    staffEmail: coWorker.email,
-                    changes
-                },
-                ipAddress: req.ip,
-                userAgent: req.get('User-Agent')
-            });
 
             if (isActive === false) {
                 // ✅ FIX: Only send email if company exists
@@ -555,19 +531,6 @@ router.patch('/:id/permissions',
                 await sendPermissionsUpdatedEmail(coWorker, company, req.user, permissionsChanges);
             }
 
-            await AuditLog.create({
-                action: 'UPDATE_STAFF_PERMISSIONS',
-                userId: req.user._id,
-                companyId: coWorker.companyId,
-                details: {
-                    staffId: coWorker._id,
-                    staffEmail: coWorker.email,
-                    oldPermissions,
-                    newPermissions: permissions
-                },
-                ipAddress: req.ip,
-                userAgent: req.get('User-Agent')
-            });
 
             res.json({
                 success: true,
@@ -620,14 +583,6 @@ router.delete('/:id',
 
                 await sendAccountDeletedPermanentEmail(coWorker, companyName, req.user);
 
-                await AuditLog.create({
-                    action: 'DELETE_STAFF',
-                    userId: req.user._id,
-                    companyId: coWorker.companyId._id,
-                    details: { staffId: coWorker._id, staffEmail, staffName },
-                    ipAddress: req.ip,
-                    userAgent: req.get('User-Agent')
-                });
 
                 res.json({ success: true, message: 'Co-worker permanently deleted' });
             } else {
@@ -636,18 +591,6 @@ router.delete('/:id',
 
                 await sendAccountDeactivatedEmail(coWorker, companyName, req.user);
 
-                await AuditLog.create({
-                    action: 'DEACTIVATE_STAFF',
-                    userId: req.user._id,
-                    companyId: coWorker.companyId._id,
-                    details: {
-                        staffId: coWorker._id,
-                        staffEmail: coWorker.email,
-                        staffName: `${coWorker.firstName} ${coWorker.lastName}`
-                    },
-                    ipAddress: req.ip,
-                    userAgent: req.get('User-Agent')
-                });
 
                 res.json({ success: true, message: 'Co-worker deactivated successfully' });
             }
@@ -693,14 +636,6 @@ router.post('/:id/resend-invite',
             const company = coWorker.companyId;
             await sendCoWorkerInvite(coWorker, company, req.user, tempPassword);
 
-            await AuditLog.create({
-                action: 'RESEND_STAFF_INVITE',
-                userId: req.user._id,
-                companyId: coWorker.companyId._id,
-                details: { staffId: coWorker._id, staffEmail: coWorker.email },
-                ipAddress: req.ip,
-                userAgent: req.get('User-Agent')
-            });
 
             res.json({ success: true, message: 'Invitation resent successfully' });
 

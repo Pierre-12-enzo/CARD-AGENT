@@ -193,22 +193,7 @@ router.post('/',
                 $inc: { 'stats.totalOrganizations': 1 }
             });
 
-            // Audit log
-            await AuditLog.create({
-                action: 'CREATE_SCHOOL',
-                userId: req.user.id,
-                companyId: req.user.companyId,
-                targetId: organization._id,
-                targetModel: 'School',
-                details: {
-                    organizationName: organization.name,
-                    type: organization.type,
-                    code: organization.code,
-                    hasLogo: !!logoData.url
-                },
-                ipAddress: req.ip,
-                userAgent: req.get('User-Agent')
-            });
+            
 
             res.status(201).json({
                 success: true,
@@ -447,20 +432,6 @@ router.put('/:id',
 
             await organization.save();
 
-            // Audit log
-            await AuditLog.create({
-                action: 'UPDATE_SCHOOL',
-                userId: req.user.id,
-                companyId: req.user.companyId,
-                targetId: organization._id,
-                targetModel: 'School',
-                details: {
-                    organizationName: organization.name,
-                    changes
-                },
-                ipAddress: req.ip,
-                userAgent: req.get('User-Agent')
-            });
 
             res.json({
                 success: true,
@@ -609,25 +580,7 @@ router.delete('/:id',
                     $inc: { 'stats.totalOrganizations': -1 }
                 });
 
-                // 6. Create audit log for the deletion
-                await AuditLog.create({
-                    action: 'DELETE_SCHOOL_CASCADE',
-                    userId: req.user.id,
-                    companyId: req.user.companyId,
-                    targetId: organization._id,
-                    targetModel: 'School',
-                    details: {
-                        organizationName: organization.name,
-                        type: organization.type,
-                        permanent: true,
-                        peopleDeleted: studentCount,
-                        templatesDeleted: templateCount,
-                        cardHistoryPreserved: cardHistoryCount,
-                        deletedBy: req.user.email
-                    },
-                    ipAddress: req.ip,
-                    userAgent: req.get('User-Agent')
-                });
+                
 
                 res.json({
                     success: true,
@@ -645,23 +598,6 @@ router.delete('/:id',
                 organization.isActive = false;
                 await organization.save();
 
-                await AuditLog.create({
-                    action: 'DELETE_SCHOOL',
-                    userId: req.user.id,
-                    companyId: req.user.companyId,
-                    targetId: organization._id,
-                    targetModel: 'School',
-                    details: {
-                        organizationName: organization.name,
-                        type: organization.type,
-                        permanent: false,
-                        hadStudents: studentCount,
-                        hadTemplates: templateCount,
-                        hadCardHistory: cardHistoryCount
-                    },
-                    ipAddress: req.ip,
-                    userAgent: req.get('User-Agent')
-                });
 
                 res.json({
                     success: true,

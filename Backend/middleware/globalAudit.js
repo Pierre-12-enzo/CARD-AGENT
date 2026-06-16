@@ -191,8 +191,22 @@ async function buildAuditData(req, body, action, isSuccess, oldRecord) {
   // Get target information
   const { targetId, targetModel, targetName } = await getTargetInfo(req, body, oldRecord);
 
-  // Get school/organization ID
+  // ✅ Get school/organization ID - with better detection
   const schoolId = await getSchoolId(req, body, oldRecord);
+
+  // ✅ For student operations, try to get school from the student
+  let finalSchoolId = schoolId;
+  if (!schoolId && (action === 'UPDATE_STUDENT' || action === 'DELETE_STUDENT')) {
+    try {
+      const Student = require('../models/Student');
+      const student = await Student.findById(targetId).select('schoolId');
+      if (student?.schoolId) {
+        finalSchoolId = student.schoolId.toString();
+      }
+    } catch (err) {
+      // Silently continue
+    }
+  }
 
   // Build changes (before/after)
   let changes = null;
@@ -203,11 +217,29 @@ async function buildAuditData(req, body, action, isSuccess, oldRecord) {
   // Build human-readable summary
   const summary = buildSummary(action, targetName, changes, req.body, body);
 
+  // ✅ Get school info for the audit log
+  let schoolInfo = null;
+  if (finalSchoolId) {
+    try {
+      const School = require('../models/School');
+      const school = await School.findById(finalSchoolId).select('name code');
+      if (school) {
+        schoolInfo = {
+          name: school.name,
+          code: school.code
+        };
+      }
+    } catch (err) {
+      // Silently continue
+    }
+  }
+
   return {
     userId: req.user.id,
     action: action,
     companyId: req.user.companyId,
-    schoolId: schoolId,
+    schoolId: finalSchoolId || null,
+    schoolInfo: schoolInfo,
     targetId: targetId,
     targetModel: targetModel,
     details: {
@@ -291,22 +323,76 @@ async function getTargetInfo(req, body, oldRecord) {
 }
 
 async function getSchoolId(req, body, oldRecord) {
-  // From params
+  // ==================== FROM PARAMS ====================
   if (req.params.orgId) return req.params.orgId;
   if (req.params.schoolId) return req.params.schoolId;
   if (req.params.organizationId) return req.params.organizationId;
+  if (req.params.id && req.originalUrl.includes('/organizations/')) {
+    return req.params.id;
+  }
 
-  // From body
+  // ==================== FROM BODY ====================
+  // Direct body fields
   if (req.body?.organizationId) return req.body.organizationId;
   if (req.body?.schoolId) return req.body.schoolId;
+  if (req.body?.organization_id) return req.body.organization_id;
+  if (req.body?.school_id) return req.body.school_id;
+
+  // For card generation
+  if (req.body?.organization) return req.body.organization;
   if (body?.organization?._id) return body.organization._id;
 
-  // From old record
-  if (oldRecord?.schoolId) return oldRecord.schoolId;
+  // For bulk operations
+  if (req.body?.organizationId) return req.body.organizationId;
+  if (req.body?.filters?.organizationId) return req.body.filters.organizationId;
 
-  // From user's permissions (for co-workers)
+  // ==================== FROM OLD RECORD ====================
+  if (oldRecord?.schoolId) return oldRecord.schoolId;
+  if (oldRecord?.schoolId?.toString) return oldRecord.schoolId.toString();
+  if (oldRecord?.organizationId) return oldRecord.organizationId;
+
+  // ==================== FROM QUERY ====================
+  if (req.query.organizationId) return req.query.organizationId;
+  if (req.query.schoolId) return req.query.schoolId;
+  if (req.query.orgId) return req.query.orgId;
+
+  // ==================== FROM USER PERMISSIONS ====================
+  // For co-workers with single organization
   if (req.user?.permissions?.length === 1) {
     return req.user.permissions[0].organizationId;
+  }
+
+  // ==================== FROM STUDENT ====================
+  // For student-specific operations, try to get school from student
+  if (req.params.id && req.originalUrl.includes('/students')) {
+    try {
+      const Student = require('../models/Student');
+      const student = await Student.findById(req.params.id).select('schoolId');
+      if (student?.schoolId) return student.schoolId.toString();
+    } catch (err) {
+      console.warn('Could not fetch student for schoolId:', err.message);
+    }
+  }
+
+  // ==================== FROM TEMPLATE ====================
+  // For template operations
+  if (req.params.id && req.originalUrl.includes('/templates')) {
+    try {
+      const Template = require('../models/Template');
+      const template = await Template.findById(req.params.id).select('schoolId');
+      if (template?.schoolId) return template.schoolId.toString();
+    } catch (err) {
+      console.warn('Could not fetch template for schoolId:', err.message);
+    }
+  }
+
+  // ==================== FROM CO-WORKER PERMISSIONS ====================
+  // For co-worker routes, get from permissions
+  if (req.originalUrl.includes('/co-workers') && req.body?.permissions) {
+    const perms = req.body.permissions;
+    if (Array.isArray(perms) && perms.length > 0) {
+      return perms[0].organizationId;
+    }
   }
 
   return null;

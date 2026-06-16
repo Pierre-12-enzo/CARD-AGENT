@@ -375,14 +375,6 @@ router.put('/profile',
 
             await company.save();
 
-            await AuditLog.create({
-                action: 'UPDATE_SETTINGS',
-                userId: req.user.id,
-                companyId: company._id,
-                details: { type: 'company_profile' },
-                ipAddress: req.ip,
-                userAgent: req.get('User-Agent')
-            });
 
             res.json({
                 success: true,
@@ -445,15 +437,6 @@ router.post('/:id/license',
                 console.error('License email failed:', emailErr);
             }
 
-            await AuditLog.create({
-                action: 'SUBSCRIPTION_CREATED',
-                userId: req.user.id,
-                companyId: company._id,
-                details: { licenseKey, maxOrganizations, maxCardsPerMonth },
-                ipAddress: req.ip,
-                userAgent: req.get('User-Agent'),
-                importance: 'high'
-            });
 
             res.json({
                 success: true,
@@ -518,15 +501,7 @@ router.post('/:id/revoke-license',
                 }
             } catch (e) { console.error('Revoke email failed:', e); }
 
-            await AuditLog.create({
-                action: 'SUBSCRIPTION_CANCELLED',
-                userId: req.user.id,
-                companyId: company._id,
-                details: { reason: req.body.reason || 'License revoked' },
-                ipAddress: req.ip,
-                userAgent: req.get('User-Agent'),
-                importance: 'critical'
-            });
+          
 
             res.json({ success: true, message: 'License revoked. Admin has been notified.' });
 
@@ -559,14 +534,6 @@ router.put('/:id/license',
 
             await company.save();
 
-            await AuditLog.create({
-                action: 'SUBSCRIPTION_UPDATED',
-                userId: req.user.id,
-                companyId: company._id,
-                details: { maxOrganizations, maxCardsPerMonth, expiresAt },
-                ipAddress: req.ip,
-                userAgent: req.get('User-Agent')
-            });
 
             res.json({ success: true, message: 'License updated', license: company.license });
 
