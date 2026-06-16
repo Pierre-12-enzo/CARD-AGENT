@@ -67,14 +67,13 @@ router.get('/', async (req, res) => {
     }
 });
 
-// ==================== GET STATISTICS ====================
+// ==================== GET STATISTICS - FIXED ====================
 router.get('/statistics', async (req, res) => {
     try {
         const { organizationId } = req.query;
 
         const match = {
-            companyId: new mongoose.Types.ObjectId(req.user.companyId),
-            status: 'success'
+            companyId: new mongoose.Types.ObjectId(req.user.companyId)
         };
 
         if (organizationId) {
@@ -107,7 +106,7 @@ router.get('/statistics', async (req, res) => {
             }
         ]);
 
-        // Get daily generation stats for the last 30 days
+        // Get daily stats for last 30 days
         const thirtyDaysAgo = new Date();
         thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
@@ -245,24 +244,37 @@ router.get('/person/:personId', async (req, res) => {
     }
 });
 
-// ==================== GET RECENT ACTIVITY ====================
+// ==================== GET RECENT ACTIVITY - FIXED ====================
 router.get('/recent', async (req, res) => {
     try {
-        const { limit = 10 } = req.query;
+        const { limit = 10, organizationId } = req.query;
 
-        const recent = await CardHistory.find({
-            companyId: req.user.companyId
-        })
+        const query = { companyId: req.user.companyId };
+        if (organizationId) {
+            query.organizationId = new mongoose.Types.ObjectId(organizationId);
+        }
+
+        const recent = await CardHistory.find(query)
             .populate('personId', 'name student_id photo_url personType')
             .populate('templateId', 'name')
             .populate('generatedBy', 'name email')
             .sort({ createdAt: -1 })
             .limit(parseInt(limit));
 
+        // Get summary stats
+        const totalCount = await CardHistory.countDocuments(query);
+        const successCount = await CardHistory.countDocuments({ ...query, status: 'success' });
+        const failedCount = await CardHistory.countDocuments({ ...query, status: 'failed' });
+
         res.json({
             success: true,
             recent,
-            count: recent.length
+            count: recent.length,
+            summary: {
+                total: totalCount,
+                successful: successCount,
+                failed: failedCount
+            }
         });
 
     } catch (error) {
@@ -270,5 +282,6 @@ router.get('/recent', async (req, res) => {
         res.status(500).json({ success: false, error: error.message });
     }
 });
+
 
 module.exports = router;

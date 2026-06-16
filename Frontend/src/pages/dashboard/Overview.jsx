@@ -1,8 +1,25 @@
-// pages/dashboard/Overview.jsx - CARD-AGENT NAVY & CRIMSON - FULL CINEMATIC
+// pages/dashboard/Overview.jsx - WITH RECHARTS GRAPHS
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { companyAPI, studentAPI, cardAPI, coWorkerAPI } from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
+import {
+  LineChart,
+  Line,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+  AreaChart,
+  Area
+} from 'recharts';
 
 const Overview = () => {
   const { user } = useAuth();
@@ -11,19 +28,34 @@ const Overview = () => {
   const [time, setTime] = useState(new Date());
   const [stats, setStats] = useState({
     organizations: { total: 0, schools: 0, corporate: 0 },
-    people: { total: 0, students: 0, employees: 0, newThisMonth: 0, withPhotos: 0 },
-    cards: { generated: 0, pending: 0, recentlyGenerated: 0 },
+    people: { total: 0, students: 0, employees: 0, newThisMonth: 0, withPhotos: 0, photoCoverage: 0 },
+    cards: {
+      generated: 0,
+      pending: 0,
+      recentlyGenerated: 0,
+      successful: 0,
+      failed: 0,
+      uniquePeople: 0,
+      batchGenerations: 0,
+      singleGenerations: 0,
+      successRate: 0
+    },
     coWorkers: { total: 0, active: 0, pending: 0 },
-    recentActivity: []
+    recentActivity: [],
+    orgBreakdown: [],
+    dailyStats: [],
+    weeklyStats: []
   });
+
+  // Colors for charts
+  const COLORS = ['#dc2626', '#ef4444', '#f87171', '#fca5a5', '#fecaca'];
+  const CARD_COLORS = ['#dc2626', '#3b82f6', '#8b5cf6', '#10b981', '#f59e0b'];
 
   useEffect(() => {
     fetchDashboardData();
     const timer = setInterval(() => setTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
-
-  // In Overview.jsx, update the fetchDashboardData function
 
   const fetchDashboardData = async (isRefreshing = false) => {
     if (isRefreshing) setRefreshing(true);
@@ -33,9 +65,9 @@ const Overview = () => {
       const [companyRes, groupedRes, cardsRes, coWorkersRes, historyStatsRes] = await Promise.allSettled([
         companyAPI.getDashboard(),
         studentAPI.getGroupedByOrganization(),
-        cardAPI.getCardHistory({ limit: 10 }),  // ✅ Using API method
+        cardAPI.getCardHistory({ limit: 10 }),
         coWorkerAPI.getAll({ limit: 100 }),
-        cardAPI.getCardStatistics()  // ✅ Using API method instead of fetch
+        cardAPI.getCardStatistics()
       ]);
 
       // Organizations & People from grouped data
@@ -57,9 +89,13 @@ const Overview = () => {
           orgBreakdown = data.organizations.map(org => ({
             name: org.organization?.name,
             type: org.organization?.type,
-            total: org.stats?.totalStudents || org.stats?.totalPeople || 0,
+            logo: org.organization?.logo?.url || null,
+            total: org.stats?.totalStudents || org.stats?.totalEmployees || 0,
+            students: org.stats?.totalStudents || 0,
+            employees: org.stats?.totalEmployees || 0,
+            withPhotos: org.stats?.withPhotos || 0,
             cardsGenerated: org.stats?.cardsGenerated || 0,
-            logo: org.organization?.logo
+            pendingCards: org.stats?.pendingCards || 0
           }));
           data.organizations.forEach(org => {
             withPhotos += org.stats?.withPhotos || 0;
@@ -69,21 +105,17 @@ const Overview = () => {
         }
       }
 
-      // Company dashboard
-      if (companyRes.status === 'fulfilled' && companyRes.value?.success) {
-        const cd = companyRes.value.dashboard;
-        if (cd) {
-          orgTotal = cd.summary?.totalOrganizations || orgTotal;
-          totalPeople = cd.summary?.totalStudents || totalPeople;
-        }
-      }
+      const photoCoverage = totalPeople > 0 ? Math.round((withPhotos / totalPeople) * 100) : 0;
 
-      // Cards from history statistics (REAL DATA)
-      let totalCardsGenerated = cardsGenerated; // fallback
+      // Card statistics
+      let totalCardsGenerated = cardsGenerated;
       let successfulCards = 0;
       let failedCards = 0;
       let uniquePeopleCount = 0;
+      let batchGenerations = 0;
+      let singleGenerations = 0;
       let dailyStats = [];
+      let weeklyStats = [];
 
       if (historyStatsRes.status === 'fulfilled' && historyStatsRes.value?.success) {
         const historyStats = historyStatsRes.value;
@@ -91,16 +123,25 @@ const Overview = () => {
         successfulCards = historyStats.stats?.successfulCards || 0;
         failedCards = historyStats.stats?.failedCards || 0;
         uniquePeopleCount = historyStats.stats?.uniquePeopleCount || 0;
+        batchGenerations = historyStats.stats?.batchGenerations || 0;
+        singleGenerations = historyStats.stats?.singleGenerations || 0;
         dailyStats = historyStats.dailyStats || [];
+        weeklyStats = historyStats.weeklyStats || [];
       }
 
-      // Cards from card history list
-      let recentCards = 0;
+      const successRate = (totalCardsGenerated > 0)
+        ? Math.round((successfulCards / totalCardsGenerated) * 100)
+        : 0;
+
+      // Recent cards
       let recentCardList = [];
       if (cardsRes.status === 'fulfilled' && cardsRes.value?.success) {
-        recentCards = cardsRes.value.history?.length || 0;
         recentCardList = cardsRes.value.history || [];
       }
+
+      const now = new Date();
+      const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      let newThisMonth = recentCardList.filter(card => new Date(card.createdAt) >= firstDayOfMonth).length;
 
       // Co-workers
       let coWorkerTotal = 0, coWorkerActive = 0, coWorkerPending = 0;
@@ -111,43 +152,116 @@ const Overview = () => {
         coWorkerPending = list.filter(c => !c.lastLogin).length;
       }
 
-      // Calculate new this month from card history
-      const now = new Date();
-      const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-      let newThisMonth = 0;
+      // Format daily stats for charts - ensure dates are properly formatted
+      const formattedDailyStats = dailyStats.slice(-7).map(day => ({
+        ...day,
+        date: day._id || day.date || 'N/A',
+        displayDate: day._id ? day._id.slice(5) : (day.date ? day.date.slice(5) : 'N/A'),
+        batch: day.batch || 0,
+        single: day.single || 0,
+        total: day.total || 0
+      }));
 
-      if (recentCardList.length > 0) {
-        newThisMonth = recentCardList.filter(card => new Date(card.createdAt) >= firstDayOfMonth).length;
-      } else {
-        newThisMonth = Math.max(0, Math.round(totalPeople * 0.15));
-      }
+      // Prepare pie chart data
+      const cardTypeData = [
+        { name: 'Batch Generations', value: batchGenerations || 0 },
+        { name: 'Single Generations', value: singleGenerations || 0 }
+      ];
 
-      // Recent Activity from card history
+      // Activity
       const activity = [
-        totalPeople > 0 && { type: 'people', action: 'Total Records', description: `${totalPeople} students & employees across ${orgTotal} organizations`, time: 'Current', icon: 'pi pi-users', color: 'slate' },
-        totalCardsGenerated > 0 && { type: 'card', action: 'Cards Generated', description: `${totalCardsGenerated} ID cards produced (${successfulCards} successful, ${failedCards} failed)`, time: 'Total', icon: 'pi pi-qrcode', color: 'red' },
-        uniquePeopleCount > 0 && { type: 'unique', action: 'Unique People', description: `${uniquePeopleCount} unique individuals have cards`, time: 'Total', icon: 'pi pi-user', color: 'green' },
-        pendingCards > 0 && { type: 'pending', action: 'Pending Cards', description: `${pendingCards} cards yet to be generated`, time: 'Remaining', icon: 'pi pi-clock', color: 'amber' },
-        coWorkerTotal > 0 && { type: 'staff', action: 'Team Members', description: `${coWorkerActive} active co-workers`, time: 'Active', icon: 'pi pi-user-plus', color: 'slate' },
-        orgTotal > 0 && { type: 'org', action: 'Organizations', description: `${schoolsCount} schools, ${corporateCount} corporate clients`, time: 'Managed', icon: 'pi pi-building', color: 'red' },
-        { type: 'system', action: 'System Ready', description: 'CARD-AGENT operational', time: 'Now', icon: 'pi pi-check-circle', color: 'red' }
+        totalPeople > 0 && {
+          type: 'people',
+          action: 'Total Records',
+          description: `${totalPeople} students & employees across ${orgTotal} organizations`,
+          time: 'Current',
+          icon: 'pi pi-users',
+          color: 'slate'
+        },
+        totalCardsGenerated > 0 && {
+          type: 'card',
+          action: 'Cards Generated',
+          description: `${totalCardsGenerated} ID cards (${successfulCards} successful, ${failedCards} failed)`,
+          time: 'Total',
+          icon: 'pi pi-qrcode',
+          color: 'red'
+        },
+        uniquePeopleCount > 0 && {
+          type: 'unique',
+          action: 'Unique Individuals',
+          description: `${uniquePeopleCount} unique people have cards`,
+          time: 'Total',
+          icon: 'pi pi-user',
+          color: 'green'
+        },
+        batchGenerations > 0 && {
+          type: 'batch',
+          action: 'Batch Generations',
+          description: `${batchGenerations} batch ${batchGenerations === 1 ? 'job' : 'jobs'}`,
+          time: 'Total',
+          icon: 'pi pi-users',
+          color: 'blue'
+        },
+        singleGenerations > 0 && {
+          type: 'single',
+          action: 'Single Generations',
+          description: `${singleGenerations} individual cards`,
+          time: 'Total',
+          icon: 'pi pi-user',
+          color: 'purple'
+        },
+        pendingCards > 0 && {
+          type: 'pending',
+          action: 'Pending Cards',
+          description: `${pendingCards} cards yet to be generated`,
+          time: 'Remaining',
+          icon: 'pi pi-clock',
+          color: 'amber'
+        },
+        coWorkerTotal > 0 && {
+          type: 'staff',
+          action: 'Team Members',
+          description: `${coWorkerActive} active co-workers`,
+          time: 'Active',
+          icon: 'pi pi-user-plus',
+          color: 'slate'
+        },
+        photoCoverage > 0 && {
+          type: 'photos',
+          action: 'Photo Coverage',
+          description: `${photoCoverage}% of people have photos`,
+          time: `${withPhotos}/${totalPeople}`,
+          icon: 'pi pi-image',
+          color: 'green'
+        }
       ].filter(Boolean);
 
       setStats({
         organizations: { total: orgTotal, schools: schoolsCount, corporate: corporateCount },
-        people: { total: totalPeople, students: totalStudents, employees: totalEmployees, newThisMonth, withPhotos },
+        people: {
+          total: totalPeople,
+          students: totalStudents,
+          employees: totalEmployees,
+          newThisMonth,
+          withPhotos,
+          photoCoverage
+        },
         cards: {
           generated: totalCardsGenerated,
           pending: pendingCards,
           recentlyGenerated: newThisMonth,
           successful: successfulCards,
           failed: failedCards,
-          uniquePeople: uniquePeopleCount
+          uniquePeople: uniquePeopleCount,
+          batchGenerations: batchGenerations,
+          singleGenerations: singleGenerations,
+          successRate: successRate
         },
         coWorkers: { total: coWorkerTotal, active: coWorkerActive, pending: coWorkerPending },
         recentActivity: activity.slice(0, 8),
         orgBreakdown: orgBreakdown.slice(0, 5),
-        recentCards: recentCardList.slice(0, 5) // Add recent cards for detailed view
+        dailyStats: formattedDailyStats,
+        weeklyStats: weeklyStats.slice(0, 4)
       });
 
     } catch (error) {
@@ -166,7 +280,6 @@ const Overview = () => {
         <div className="text-center">
           <div className="w-20 h-20 border-4 border-slate-200 border-t-red-600 rounded-full animate-spin mx-auto mb-4"></div>
           <p className="text-slate-700 font-semibold text-lg">Loading Dashboard...</p>
-          <p className="text-slate-500 text-sm mt-2">Fetching real-time analytics for your company</p>
         </div>
       </div>
     );
@@ -207,10 +320,6 @@ const Overview = () => {
                   <i className="pi pi-clock text-slate-400"></i>
                   <span className="text-slate-300">{time.toLocaleTimeString()}</span>
                 </div>
-                <div className="flex items-center space-x-2">
-                  <i className="pi pi-calendar text-slate-400"></i>
-                  <span className="text-slate-300">{time.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</span>
-                </div>
                 <button onClick={refreshData}
                   className="flex items-center space-x-2 bg-red-600/50 hover:bg-red-600 px-3 py-1.5 rounded-lg transition-colors text-sm">
                   <i className="pi pi-refresh text-xs"></i>
@@ -223,7 +332,6 @@ const Overview = () => {
             </div>
           </div>
         </div>
-        {/* Background Effects */}
         <div className="absolute top-0 right-0 w-64 h-64 bg-gradient-to-bl from-red-500/20 to-transparent rounded-full blur-3xl"></div>
         <div className="absolute bottom-0 left-0 w-48 h-48 bg-slate-500/10 rounded-full blur-2xl"></div>
       </div>
@@ -250,7 +358,7 @@ const Overview = () => {
         <MetricCard
           title="Cards Generated"
           value={stats.cards.generated}
-          subtitle={`${stats.cards.pending} pending`}
+          subtitle={`${stats.cards.successRate}% success • ${stats.cards.pending} pending`}
           icon="pi pi-qrcode"
           gradient="from-slate-800 to-slate-700"
           link="/dashboard/card-studio"
@@ -265,17 +373,194 @@ const Overview = () => {
         />
       </div>
 
-      {/* Main Content Grid */}
+      {/* Charts Row */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left Column - Quick Actions & Performance */}
-        <div className="lg:col-span-2 space-y-6">
-          {/* Quick Actions */}
+        {/* Daily Generation Chart */}
+        <div className="lg:col-span-2 bg-white rounded-2xl shadow-lg border border-slate-200/50 p-6">
+          <div className="flex items-center justify-between mb-5">
+            <div>
+              <h3 className="text-lg font-bold text-slate-800">Daily Card Generation</h3>
+              <p className="text-xs text-slate-500">Last 7 days trend</p>
+            </div>
+            <i className="pi pi-chart-line text-red-500 text-lg"></i>
+          </div>
+          {stats.dailyStats.length > 0 ? (
+            <ResponsiveContainer width="100%" height={250}>
+              <AreaChart data={stats.dailyStats}>
+                <defs>
+                  <linearGradient id="colorTotal" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#dc2626" stopOpacity={0.8} />
+                    <stop offset="95%" stopColor="#dc2626" stopOpacity={0.1} />
+                  </linearGradient>
+                  <linearGradient id="colorBatch" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.8} />
+                    <stop offset="95%" stopColor="#3b82f6" stopOpacity={0.1} />
+                  </linearGradient>
+                  <linearGradient id="colorSingle" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.8} />
+                    <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0.1} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                <XAxis dataKey="displayDate" stroke="#94a3b8" fontSize={11} />
+                <YAxis stroke="#94a3b8" fontSize={11} />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: 'white',
+                    border: '1px solid #e2e8f0',
+                    borderRadius: '8px',
+                    padding: '8px 12px'
+                  }}
+                  formatter={(value, name) => {
+                    const labels = { total: 'Total', batch: 'Batch', single: 'Single' };
+                    return [value, labels[name] || name];
+                  }}
+                />
+                <Legend />
+                <Area
+                  type="monotone"
+                  dataKey="total"
+                  stroke="#dc2626"
+                  strokeWidth={2}
+                  fillOpacity={1}
+                  fill="url(#colorTotal)"
+                  name="Total"
+                />
+                <Area
+                  type="monotone"
+                  dataKey="batch"
+                  stroke="#3b82f6"
+                  strokeWidth={2}
+                  fillOpacity={1}
+                  fill="url(#colorBatch)"
+                  name="Batch"
+                />
+                <Area
+                  type="monotone"
+                  dataKey="single"
+                  stroke="#8b5cf6"
+                  strokeWidth={2}
+                  fillOpacity={1}
+                  fill="url(#colorSingle)"
+                  name="Single"
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="flex items-center justify-center h-[250px] text-slate-400">
+              <div className="text-center">
+                <i className="pi pi-chart-line text-3xl mb-2 block"></i>
+                <p className="text-sm">No card generation data available yet</p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Card Type Distribution */}
+        <div className="bg-white rounded-2xl shadow-lg border border-slate-200/50 p-6">
+          <div className="flex items-center justify-between mb-5">
+            <div>
+              <h3 className="text-lg font-bold text-slate-800">Generation Type</h3>
+              <p className="text-xs text-slate-500">Batch vs Single distribution</p>
+            </div>
+            <i className="pi pi-chart-pie text-red-500 text-lg"></i>
+          </div>
+          {stats.cards.batchGenerations > 0 || stats.cards.singleGenerations > 0 ? (
+            <ResponsiveContainer width="100%" height={250}>
+              <PieChart>
+                <Pie
+                  data={[
+                    { name: 'Batch', value: stats.cards.batchGenerations },
+                    { name: 'Single', value: stats.cards.singleGenerations }
+                  ]}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={60}
+                  outerRadius={90}
+                  paddingAngle={2}
+                  dataKey="value"
+                  label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                  labelLine={false}
+                >
+                  <Cell fill="#3b82f6" />
+                  <Cell fill="#8b5cf6" />
+                </Pie>
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: 'white',
+                    border: '1px solid #e2e8f0',
+                    borderRadius: '8px',
+                    padding: '8px 12px'
+                  }}
+                />
+                <Legend />
+              </PieChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="flex items-center justify-center h-[250px] text-slate-400">
+              <div className="text-center">
+                <i className="pi pi-chart-pie text-3xl mb-2 block"></i>
+                <p className="text-sm">No card type data available</p>
+              </div>
+            </div>
+          )}
+          <div className="mt-2 flex justify-center gap-6 text-xs">
+            <div className="flex items-center gap-2">
+              <span className="w-3 h-3 bg-blue-500 rounded-full"></span>
+              <span className="text-slate-600">Batch: {stats.cards.batchGenerations}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-3 h-3 bg-purple-500 rounded-full"></span>
+              <span className="text-slate-600">Single: {stats.cards.singleGenerations}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Organization Stats Bar Chart */}
+      {stats.orgBreakdown.length > 0 && (
+        <div className="bg-white rounded-2xl shadow-lg border border-slate-200/50 p-6">
+          <div className="flex items-center justify-between mb-5">
+            <div>
+              <h3 className="text-lg font-bold text-slate-800">Organization Performance</h3>
+              <p className="text-xs text-slate-500">Cards vs People per organization</p>
+            </div>
+            <Link to="/dashboard/organizations" className="text-red-600 hover:text-red-700 text-sm font-medium flex items-center space-x-1">
+              <span>View All</span>
+              <i className="pi pi-arrow-right text-xs"></i>
+            </Link>
+          </div>
+          <ResponsiveContainer width="100%" height={250}>
+            <BarChart data={stats.orgBreakdown}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+              <XAxis dataKey="name" stroke="#94a3b8" fontSize={11} tick={{ fontSize: 10 }} />
+              <YAxis stroke="#94a3b8" fontSize={11} />
+              <Tooltip
+                contentStyle={{
+                  backgroundColor: 'white',
+                  border: '1px solid #e2e8f0',
+                  borderRadius: '8px',
+                  padding: '8px 12px'
+                }}
+              />
+              <Legend />
+              <Bar dataKey="total" fill="#a52525" name="People" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="cardsGenerated" fill="#326fd1" name="Cards" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      {/* Quick Actions & Activity */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Quick Actions */}
+        <div className="lg:col-span-1 space-y-6">
           <div className="bg-white rounded-2xl shadow-lg border border-slate-200/50 p-6">
             <div className="flex items-center justify-between mb-5">
               <h3 className="text-lg font-bold text-slate-800">Quick Actions</h3>
               <i className="pi pi-bolt text-red-500 text-lg"></i>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="space-y-3">
               <ActionCard
                 title="Generate ID Cards"
                 description="Batch process cards for any organization"
@@ -307,116 +592,6 @@ const Overview = () => {
             </div>
           </div>
 
-          {/* Organization Breakdown */}
-          <div className="bg-white rounded-2xl shadow-lg border border-slate-200/50 p-6">
-            <div className="flex items-center justify-between mb-5">
-              <h3 className="text-lg font-bold text-slate-800">Organization Overview</h3>
-              <Link to="/dashboard/organizations" className="text-red-600 hover:text-red-700 text-sm font-medium flex items-center space-x-1">
-                <span>View All</span>
-                <i className="pi pi-arrow-right text-xs"></i>
-              </Link>
-            </div>
-            {stats.orgBreakdown.length > 0 ? (
-              <div className="space-y-3">
-                {stats.orgBreakdown.map((org, i) => (
-                  <div key={i} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl hover:bg-white transition-colors border border-slate-100">
-                    <div className="flex items-center space-x-3">
-                      <div className={`w-9 h-9 rounded-lg flex items-center justify-center text-lg ${org.type === 'corporate' ? 'bg-slate-200' : 'bg-red-100'}`}>
-                        {org.type === 'corporate' ? '🏢' : '🏫'}
-                      </div>
-                      <div>
-                        <p className="font-medium text-slate-800 text-sm">{org.name}</p>
-                        <p className="text-xs text-slate-500 capitalize">{org.type}</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center space-x-4">
-                      <div className="text-center">
-                        <p className="text-sm font-bold text-slate-700">{org.total}</p>
-                        <p className="text-xs text-slate-500">People</p>
-                      </div>
-                      <div className="text-center">
-                        <p className="text-sm font-bold text-red-600">{org.cardsGenerated}</p>
-                        <p className="text-xs text-slate-500">Cards</p>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-center py-8 text-slate-400">
-                <i className="pi pi-building text-3xl mb-2 block"></i>
-                <p className="text-sm">No organizations yet</p>
-              </div>
-            )}
-          </div>
-
-          {/* Recent Activity Feed */}
-          <div className="bg-white rounded-2xl shadow-lg border border-slate-200/50 p-6">
-            <div className="flex items-center justify-between mb-5">
-              <h3 className="text-lg font-bold text-slate-800">Recent Activity</h3>
-              <i className="pi pi-history text-red-500 text-lg"></i>
-            </div>
-            <div className="space-y-3 max-h-80 overflow-y-auto">
-              {stats.recentActivity.map((activity, index) => (
-                <div key={index} className="flex items-center space-x-4 p-3 rounded-xl bg-slate-50 hover:bg-white transition-colors border border-slate-100">
-                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${activity.color === 'red' ? 'bg-red-100 text-red-600' :
-                    activity.color === 'amber' ? 'bg-amber-100 text-amber-600' :
-                      'bg-slate-100 text-slate-600'
-                    }`}>
-                    <i className={`${activity.icon} text-sm`}></i>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-slate-800 truncate">{activity.action}</p>
-                    <p className="text-xs text-slate-500">{activity.description} • {activity.time}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* Right Column */}
-        <div className="space-y-6">
-          {/* Live Activity Feed */}
-          <div className="bg-white rounded-2xl shadow-lg border border-slate-200/50 p-6">
-            <div className="flex items-center justify-between mb-5">
-              <h3 className="text-lg font-bold text-slate-800">Quick Stats</h3>
-              <i className="pi pi-chart-bar text-red-500 text-lg"></i>
-            </div>
-            <div className="space-y-4">
-              <QuickStatItem
-                icon="pi pi-building" label="Organizations" value={stats.organizations.total}
-                breakdown={`${stats.organizations.schools} schools, ${stats.organizations.corporate} corporate`}
-                color="slate"
-              />
-              <QuickStatItem
-                icon="pi pi-users" label="Students" value={stats.people.students}
-                breakdown={`+${stats.people.newThisMonth} this month`}
-                color="red"
-              />
-              <QuickStatItem
-                icon="pi pi-briefcase" label="Employees" value={stats.people.employees}
-                breakdown="Across all corporate clients"
-                color="slate"
-              />
-              <QuickStatItem
-                icon="pi pi-image" label="Photos" value={stats.people.withPhotos}
-                breakdown={`${stats.people.total > 0 ? Math.round((stats.people.withPhotos / stats.people.total) * 100) : 0}% coverage`}
-                color="red"
-              />
-              <QuickStatItem
-                icon="pi pi-qrcode" label="Cards Generated" value={stats.cards.generated}
-                breakdown={`${stats.cards.pending} pending`}
-                color="slate"
-              />
-              <QuickStatItem
-                icon="pi pi-user-plus" label="Co-Workers" value={stats.coWorkers.active}
-                breakdown={`${stats.coWorkers.total} total, ${stats.coWorkers.pending} pending invites`}
-                color="red"
-              />
-            </div>
-          </div>
-
           {/* System Status */}
           <div className="bg-gradient-to-br from-slate-800 to-slate-900 rounded-2xl shadow-lg p-6 text-white">
             <h3 className="text-lg font-bold mb-4">System Status</h3>
@@ -433,6 +608,33 @@ const Overview = () => {
                 Last refreshed: {time.toLocaleTimeString()}
               </p>
             </div>
+          </div>
+        </div>
+
+        {/* Recent Activity */}
+        <div className="lg:col-span-2 bg-white rounded-2xl shadow-lg border border-slate-200/50 p-6">
+          <div className="flex items-center justify-between mb-5">
+            <h3 className="text-lg font-bold text-slate-800">Recent Activity</h3>
+            <i className="pi pi-history text-red-500 text-lg"></i>
+          </div>
+          <div className="space-y-3 overflow-y-auto">
+            {stats.recentActivity.map((activity, index) => (
+              <div key={index} className="flex items-center space-x-4 p-3 rounded-xl bg-slate-50 hover:bg-white transition-colors border border-slate-100">
+                <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${activity.color === 'red' ? 'bg-red-100 text-red-600' :
+                  activity.color === 'amber' ? 'bg-amber-100 text-amber-600' :
+                    activity.color === 'green' ? 'bg-green-100 text-green-600' :
+                      activity.color === 'blue' ? 'bg-blue-100 text-blue-600' :
+                        activity.color === 'purple' ? 'bg-purple-100 text-purple-600' :
+                          'bg-slate-100 text-slate-600'
+                  }`}>
+                  <i className={`${activity.icon} text-sm`}></i>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-slate-800 truncate">{activity.action}</p>
+                  <p className="text-xs text-slate-500">{activity.description} • {activity.time}</p>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       </div>
@@ -477,21 +679,6 @@ const ActionCard = ({ title, description, icon, color, to }) => (
       <i className={`pi pi-chevron-right text-sm ${color === 'red' ? 'text-red-400' : 'text-slate-400'} group-hover:translate-x-1 transition-transform`}></i>
     </div>
   </Link>
-);
-
-const QuickStatItem = ({ icon, label, value, breakdown, color }) => (
-  <div className="flex items-center justify-between py-2">
-    <div className="flex items-center space-x-3">
-      <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${color === 'red' ? 'bg-red-100 text-red-600' : 'bg-slate-100 text-slate-600'}`}>
-        <i className={`${icon} text-sm`}></i>
-      </div>
-      <div>
-        <p className="text-sm font-medium text-slate-800">{label}</p>
-        <p className="text-xs text-slate-500">{breakdown}</p>
-      </div>
-    </div>
-    <span className="text-lg font-bold text-slate-800">{typeof value === 'number' ? value.toLocaleString() : value}</span>
-  </div>
 );
 
 const StatusItem = ({ label, status }) => {

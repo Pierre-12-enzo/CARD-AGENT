@@ -769,7 +769,7 @@ const Organizations = () => {
         </div>
       )}
 
-      {/* Delete Confirmation Modal */}
+      {/* Delete Confirmation Modal - UPDATED WITH CASCADE WARNING */}
       {showDeleteConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 animate-scale-in">
@@ -782,17 +782,39 @@ const Organizations = () => {
                 You are about to delete <span className="font-semibold text-slate-700">"{showDeleteConfirm.name}"</span>.
               </p>
 
-              <div className="bg-red-50 border border-red-200 rounded-xl p-4 mt-4 text-left">
-                <p className="text-sm font-semibold text-red-800 mb-2">⚠️ Warning: This organization has:</p>
-                <ul className="text-sm text-red-700 space-y-1 list-disc list-inside">
-                  <li>{showDeleteConfirm.stats?.students || 0} Students</li>
-                  <li>{showDeleteConfirm.stats?.employees || 0} Employees</li>
-                  <li>{showDeleteConfirm.stats?.templates || 0} Templates</li>
-                  <li>{showDeleteConfirm.stats?.cardsGenerated || 0} Generated Cards</li>
-                </ul>
-                <p className="text-sm text-red-600 font-semibold mt-3">
-                  You must delete all records first before permanently deleting this organization.
+              {/* ⚠️ BIG WARNING - Show what will be deleted */}
+              <div className="bg-red-50 border-2 border-red-300 rounded-xl p-4 mt-4 text-left">
+                <p className="text-sm font-bold text-red-800 mb-3 flex items-center gap-2">
+                  <i className="pi pi-trash text-red-600"></i>
+                  This will permanently delete:
                 </p>
+                <ul className="text-sm text-red-700 space-y-2">
+                  <li className="flex justify-between items-center border-b border-red-100 pb-2">
+                    <span>👤 Students & Employees</span>
+                    <span className="font-bold">{showDeleteConfirm.stats?.students + showDeleteConfirm.stats?.employees || 0}</span>
+                  </li>
+                  <li className="flex justify-between items-center border-b border-red-100 pb-2">
+                    <span>📸 All their photos (Cloudinary)</span>
+                    <span className="font-bold">Permanently</span>
+                  </li>
+                  <li className="flex justify-between items-center border-b border-red-100 pb-2">
+                    <span>🎨 Templates ({showDeleteConfirm.stats?.templates || 0})</span>
+                    <span className="font-bold">{showDeleteConfirm.stats?.templates || 0}</span>
+                  </li>
+                  <li className="flex justify-between items-center">
+                    <span>📊 Card History</span>
+                    <span className="text-green-600 font-bold">✓ Preserved</span>
+                  </li>
+                  <li className="flex justify-between items-center">
+                    <span>📋 Audit Logs</span>
+                    <span className="text-green-600 font-bold">✓ Preserved</span>
+                  </li>
+                </ul>
+                <div className="mt-3 p-3 bg-red-100 rounded-lg">
+                  <p className="text-sm text-red-800 font-bold text-center">
+                    ⚠️ THIS ACTION CANNOT BE UNDONE!
+                  </p>
+                </div>
               </div>
 
               <div className="flex gap-3 mt-6">
@@ -804,21 +826,43 @@ const Organizations = () => {
                 </button>
                 <button
                   onClick={async () => {
-                    // First soft delete (deactivate)
                     try {
-                      const response = await organizationAPI.delete(showDeleteConfirm._id);
+                      // ✅ Delete with cascade = true
+                      const response = await organizationAPI.delete(showDeleteConfirm._id + '?permanent=true&cascade=true');
                       if (response.success) {
-                        toast.warning(`${showDeleteConfirm.name} has been deactivated. Delete all records first to permanently remove it.`);
+                        toast.success(`${showDeleteConfirm.name} deleted successfully! ${response.details?.peopleDeleted || 0} people and ${response.details?.templatesDeleted || 0} templates removed.`);
                         setShowDeleteConfirm(null);
                         loadOrganizations();
                       }
                     } catch (error) {
-                      toast.error(error.response?.data?.error || 'Failed to deactivate organization');
+                      const errorData = error.response?.data;
+
+                      // If cascade confirmation is required, show a second confirmation
+                      if (errorData?.requiresCascade) {
+                        const confirmAgain = window.confirm(
+                          `⚠️ WARNING: This organization has ${errorData.stats?.students || 0} people and ${errorData.stats?.templates || 0} templates.\n\n` +
+                          `They will be PERMANENTLY DELETED.\n` +
+                          `Card history (${errorData.stats?.cardHistory || 0} records) will be preserved.\n\n` +
+                          `Are you sure you want to proceed?`
+                        );
+                        if (confirmAgain) {
+                          // Retry with cascade=true
+                          const retryResponse = await organizationAPI.delete(showDeleteConfirm._id + '?permanent=true&cascade=true');
+                          if (retryResponse.success) {
+                            toast.success(`${showDeleteConfirm.name} deleted successfully!`);
+                            setShowDeleteConfirm(null);
+                            loadOrganizations();
+                          }
+                        }
+                      } else {
+                        toast.error(errorData?.error || 'Failed to delete organization');
+                      }
                     }
                   }}
-                  className="flex-1 py-2.5 bg-amber-600 text-white rounded-xl font-medium hover:bg-amber-700 transition-colors"
+                  className="flex-1 py-2.5 bg-red-600 text-white rounded-xl font-medium hover:bg-red-700 transition-colors flex items-center justify-center gap-2"
                 >
-                  Deactivate (Soft Delete)
+                  <i className="pi pi-trash"></i>
+                  <span>Delete Permanently</span>
                 </button>
               </div>
             </div>

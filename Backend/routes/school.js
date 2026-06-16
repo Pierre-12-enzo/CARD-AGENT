@@ -482,7 +482,7 @@ router.put('/:id',
 );
 
 // ============================================
-// DELETE ORGANIZATION
+// DELETE ORGANIZATION - WITH CASCADE DELETE (People + Templates)
 // ============================================
 router.delete('/:id',
     roleMiddleware(['admin', 'super_admin']),
@@ -497,47 +497,133 @@ router.delete('/:id',
                 return res.status(404).json({ success: false, error: 'Organization not found' });
             }
 
-            const { permanent } = req.query;
-
-            // Check counts before deletion
+            // Get counts before deletion
             const studentCount = await Student.countDocuments({ schoolId: organization._id });
+            const employeeCount = await Student.countDocuments({ schoolId: organization._id, personType: 'employee' });
             const templateCount = await Template.countDocuments({ schoolId: organization._id });
             const cardHistoryCount = await CardHistory?.countDocuments({ organizationId: organization._id }) || 0;
 
+            // Check if user confirmed cascade delete
+            const { permanent, cascade } = req.query;
+
+            // Show warning if has data and cascade is not explicitly true
+            if (!cascade && (studentCount > 0 || templateCount > 0)) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'This organization has associated data. Please confirm cascade deletion.',
+                    requiresCascade: true,
+                    stats: {
+                        students: studentCount,
+                        employees: employeeCount,
+                        templates: templateCount,
+                        cardHistory: cardHistoryCount
+                    },
+                    message: `Organization has ${studentCount} people and ${templateCount} templates. They will be permanently deleted. Card history (${cardHistoryCount} records) will be preserved.`
+                });
+            }
+
             if (permanent === 'true') {
-                // Show warning if has data
-                if (studentCount > 0 || templateCount > 0 || cardHistoryCount > 0) {
-                    return res.status(400).json({
-                        success: false,
-                        error: `Cannot permanently delete. Organization has ${studentCount} people, ${templateCount} templates, and ${cardHistoryCount} card records. Please delete all records first or use soft delete.`,
-                        stats: { studentCount, templateCount, cardHistoryCount }
-                    });
+                // ==================== CASCADE DELETE ====================
+
+                // 1. Delete all students/employees
+                if (studentCount > 0) {
+                    console.log(`🗑️ Deleting ${studentCount} people from organization...`);
+
+                    // Delete photos from Cloudinary first
+                    const people = await Student.find({ schoolId: organization._id });
+                    let deletedPhotos = 0;
+                    for (const person of people) {
+                        if (person.photo_public_id) {
+                            try {
+                                await cloudinary.uploader.destroy(person.photo_public_id);
+                                deletedPhotos++;
+                            } catch (photoError) {
+                                console.warn(`⚠️ Could not delete photo for ${person.name}:`, photoError.message);
+                            }
+                        }
+                    }
+                    console.log(`📸 Deleted ${deletedPhotos} photos from Cloudinary`);
+
+                    // Delete all people from database
+                    const result = await Student.deleteMany({ schoolId: organization._id });
+                    console.log(`✅ Deleted ${result.deletedCount} people from database`);
                 }
 
-                // Delete logo from cloudinary
+                // 2. Delete all templates
+                if (templateCount > 0) {
+                    console.log(`🗑️ Deleting ${templateCount} templates...`);
+
+                    // Delete template images from Cloudinary
+                    const templates = await Template.find({ schoolId: organization._id });
+                    let deletedTemplateImages = 0;
+                    for (const template of templates) {
+                        if (template.frontSide?.public_id) {
+                            try {
+                                await cloudinary.uploader.destroy(template.frontSide.public_id);
+                                deletedTemplateImages++;
+                            } catch (err) {
+                                console.warn(`⚠️ Could not delete template image:`, err.message);
+                            }
+                        }
+                        if (template.backSide?.public_id) {
+                            try {
+                                await cloudinary.uploader.destroy(template.backSide.public_id);
+                                deletedTemplateImages++;
+                            } catch (err) {
+                                console.warn(`⚠️ Could not delete template back image:`, err.message);
+                            }
+                        }
+                    }
+                    console.log(`📸 Deleted ${deletedTemplateImages} template images from Cloudinary`);
+
+                    // Delete all templates from database
+                    const result = await Template.deleteMany({ schoolId: organization._id });
+                    console.log(`✅ Deleted ${result.deletedCount} templates from database`);
+                }
+
+                // 3. Delete organization logo from cloudinary
                 if (organization.logo?.publicId) {
                     try {
                         await deleteImage(organization.logo.publicId);
+                        console.log(`🗑️ Deleted organization logo: ${organization.logo.publicId}`);
                     } catch (e) {
                         console.warn('Could not delete logo:', e.message);
                     }
                 }
 
-                await School.findByIdAndDelete(organization._id);
+                // 4. SOFT DELETE - Just mark organization as inactive (keep the record)
+                // This preserves card history and audit logs
+                organization.isActive = false;
+                organization.deletedAt = new Date();
+                organization.deletedBy = req.user.id;
+                organization.deletionMetadata = {
+                    peopleDeleted: studentCount,
+                    templatesDeleted: templateCount,
+                    photosDeleted: deletedPhotos || 0,
+                    cardHistoryPreserved: cardHistoryCount
+                };
+                await organization.save();
 
-                // Update company stats
+                // 5. Update company stats
                 await Company.findByIdAndUpdate(req.user.companyId, {
                     $inc: { 'stats.totalOrganizations': -1 }
                 });
 
+                // 6. Create audit log for the deletion
                 await AuditLog.create({
-                    action: 'DELETE_SCHOOL',
+                    action: 'DELETE_SCHOOL_CASCADE',
                     userId: req.user.id,
                     companyId: req.user.companyId,
+                    targetId: organization._id,
+                    targetModel: 'School',
                     details: {
                         organizationName: organization.name,
                         type: organization.type,
-                        permanent: true
+                        permanent: true,
+                        peopleDeleted: studentCount,
+                        templatesDeleted: templateCount,
+                        cardHistoryPreserved: cardHistoryCount,
+                        deletedBy: req.user.email
                     },
                     ipAddress: req.ip,
                     userAgent: req.get('User-Agent')
@@ -545,10 +631,17 @@ router.delete('/:id',
 
                 res.json({
                     success: true,
-                    message: 'Organization permanently deleted'
+                    message: `Organization "${organization.name}" has been deleted.`,
+                    details: {
+                        peopleDeleted: studentCount,
+                        templatesDeleted: templateCount,
+                        cardHistoryPreserved: cardHistoryCount,
+                        organizationDeactivated: true
+                    }
                 });
+
             } else {
-                // SOFT DELETE - Deactivate only
+                // ==================== SOFT DELETE (Deactivate only) ====================
                 organization.isActive = false;
                 await organization.save();
 
@@ -572,12 +665,12 @@ router.delete('/:id',
 
                 res.json({
                     success: true,
-                    message: `Organization deactivated successfully. ${studentCount} people, ${templateCount} templates, and ${cardHistoryCount} card records are preserved but inaccessible.`
+                    message: `Organization "${organization.name}" has been deactivated. ${studentCount} people, ${templateCount} templates, and ${cardHistoryCount} card records are preserved but inaccessible.`
                 });
             }
 
         } catch (error) {
-            console.error('Delete organization error:', error);
+            console.error('❌ Delete organization error:', error);
             res.status(500).json({ success: false, error: error.message });
         }
     }
