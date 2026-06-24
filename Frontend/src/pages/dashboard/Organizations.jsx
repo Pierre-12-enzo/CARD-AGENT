@@ -311,13 +311,20 @@ const Organizations = () => {
 
   const handleDelete = async () => {
     if (!showDeleteConfirm) return;
-    setDeleting(true);
+    setDeleting(true);  // ✅ Sets loading state
 
     try {
-      const response = await organizationAPI.delete(showDeleteConfirm._id + '?permanent=true');
+      const response = await organizationAPI.delete(showDeleteConfirm._id + '?permanent=true&cascade=true');
 
       if (response.success) {
-        toast.success(`${showDeleteConfirm.name} deleted successfully!`);
+        const details = response.details || {};
+        const peopleDeleted = details.peopleDeleted || 0;
+        const templatesDeleted = details.templatesDeleted || 0;
+
+        toast.success(
+          `${showDeleteConfirm.name} deleted successfully! ` +
+          `${peopleDeleted} people and ${templatesDeleted} templates removed.`
+        );
         setShowDeleteConfirm(null);
         loadOrganizations();
       } else {
@@ -325,9 +332,41 @@ const Organizations = () => {
       }
     } catch (error) {
       console.error('Delete error:', error);
-      toast.error(error.response?.data?.error || 'Failed to delete organization');
+
+      const errorData = error.response?.data;
+
+      if (errorData?.requiresCascade) {
+        const stats = errorData.stats || {};
+        const peopleCount = (stats.students || 0) + (stats.employees || 0);
+        const templatesCount = stats.templates || 0;
+        const cardHistoryCount = stats.cardHistory || 0;
+
+        const confirmAgain = window.confirm(
+          `⚠️ WARNING: This organization has ${peopleCount} people and ${templatesCount} templates.\n\n` +
+          `They will be PERMANENTLY DELETED.\n` +
+          `Card history (${cardHistoryCount} records) will be preserved.\n\n` +
+          `Are you sure you want to proceed?`
+        );
+
+        if (confirmAgain) {
+          try {
+            const retryResponse = await organizationAPI.delete(
+              showDeleteConfirm._id + '?permanent=true&cascade=true'
+            );
+            if (retryResponse.success) {
+              toast.success(`${showDeleteConfirm.name} deleted successfully!`);
+              setShowDeleteConfirm(null);
+              loadOrganizations();
+            }
+          } catch (retryError) {
+            toast.error(retryError.response?.data?.error || 'Failed to delete organization');
+          }
+        }
+      } else {
+        toast.error(errorData?.error || 'Failed to delete organization');
+      }
     } finally {
-      setDeleting(false);
+      setDeleting(false);  // ✅ Clears loading state
     }
   };
 
@@ -769,7 +808,7 @@ const Organizations = () => {
         </div>
       )}
 
-      {/* Delete Confirmation Modal - UPDATED WITH CASCADE WARNING */}
+      {/* Delete Confirmation Modal - UPDATED WITH LOADING STATE */}
       {showDeleteConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 animate-scale-in">
@@ -794,7 +833,7 @@ const Organizations = () => {
                     <span className="font-bold">{showDeleteConfirm.stats?.students + showDeleteConfirm.stats?.employees || 0}</span>
                   </li>
                   <li className="flex justify-between items-center border-b border-red-100 pb-2">
-                    <span>📸 All their photos (Cloudinary)</span>
+                    <span>📸 All their photos </span>
                     <span className="font-bold">Permanently</span>
                   </li>
                   <li className="flex justify-between items-center border-b border-red-100 pb-2">
@@ -820,49 +859,30 @@ const Organizations = () => {
               <div className="flex gap-3 mt-6">
                 <button
                   onClick={() => setShowDeleteConfirm(null)}
-                  className="flex-1 py-2.5 border border-slate-300 rounded-xl text-slate-700 font-medium hover:bg-slate-50 transition-colors"
+                  disabled={deleting}
+                  className="flex-1 py-2.5 border border-slate-300 rounded-xl text-slate-700 font-medium hover:bg-slate-50 disabled:opacity-50 transition-colors"
                 >
                   Cancel
                 </button>
                 <button
-                  onClick={async () => {
-                    try {
-                      // ✅ Delete with cascade = true
-                      const response = await organizationAPI.delete(showDeleteConfirm._id + '?permanent=true&cascade=true');
-                      if (response.success) {
-                        toast.success(`${showDeleteConfirm.name} deleted successfully! ${response.details?.peopleDeleted || 0} people and ${response.details?.templatesDeleted || 0} templates removed.`);
-                        setShowDeleteConfirm(null);
-                        loadOrganizations();
-                      }
-                    } catch (error) {
-                      const errorData = error.response?.data;
-
-                      // If cascade confirmation is required, show a second confirmation
-                      if (errorData?.requiresCascade) {
-                        const confirmAgain = window.confirm(
-                          `⚠️ WARNING: This organization has ${errorData.stats?.students || 0} people and ${errorData.stats?.templates || 0} templates.\n\n` +
-                          `They will be PERMANENTLY DELETED.\n` +
-                          `Card history (${errorData.stats?.cardHistory || 0} records) will be preserved.\n\n` +
-                          `Are you sure you want to proceed?`
-                        );
-                        if (confirmAgain) {
-                          // Retry with cascade=true
-                          const retryResponse = await organizationAPI.delete(showDeleteConfirm._id + '?permanent=true&cascade=true');
-                          if (retryResponse.success) {
-                            toast.success(`${showDeleteConfirm.name} deleted successfully!`);
-                            setShowDeleteConfirm(null);
-                            loadOrganizations();
-                          }
-                        }
-                      } else {
-                        toast.error(errorData?.error || 'Failed to delete organization');
-                      }
-                    }
-                  }}
-                  className="flex-1 py-2.5 bg-red-600 text-white rounded-xl font-medium hover:bg-red-700 transition-colors flex items-center justify-center gap-2"
+                  onClick={handleDelete}
+                  disabled={deleting}
+                  className="flex-1 py-2.5 bg-red-600 text-white rounded-xl font-medium hover:bg-red-700 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
                 >
-                  <i className="pi pi-trash"></i>
-                  <span>Delete Permanently</span>
+                  {deleting ? (
+                    <>
+                      <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      <span>Deleting...</span>
+                    </>
+                  ) : (
+                    <>
+                      <i className="pi pi-trash"></i>
+                      <span>Delete Permanently</span>
+                    </>
+                  )}
                 </button>
               </div>
             </div>
