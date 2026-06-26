@@ -1,6 +1,6 @@
 // components/marketing/three/HeroScene.jsx
 // The R3F <Canvas>: navy environment, crimson lighting, Bloom glow, pointer parallax.
-import React, { useRef } from 'react';
+import React from 'react';
 import { Canvas, useThree, useFrame } from '@react-three/fiber';
 import { EffectComposer, Bloom, Vignette } from '@react-three/postprocessing';
 import FloatingCards from './FloatingCards';
@@ -24,7 +24,6 @@ const CameraRig = () => {
 
 // Tracks normalized pointer (-1..1) into shared ref
 const PointerTracker = () => {
-  const { gl } = useThree();
   useFrame(({ pointer: p }) => {
     pointer.current.x = p.x;
     pointer.current.y = p.y;
