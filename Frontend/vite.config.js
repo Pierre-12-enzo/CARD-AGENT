@@ -7,7 +7,11 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   publicDir: 'public',
    base: '/',
-  
+  server: {
+    fs: {
+      strict: false
+    }
+  },
   build: {
     outDir: 'dist',
     sourcemap: false, // Disable in production
