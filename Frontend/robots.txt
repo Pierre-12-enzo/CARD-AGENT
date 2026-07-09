@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://card-agent-virid.vercel.app/sitemap.
