@@ -2,21 +2,20 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
     <loc>https://card-agent-virid.vercel.app/</loc>
-    <lastmod>2026-07-07</lastmod>
+    <lastmod>2026-07-09</lastmod> <!-- Update to today's date -->
     <changefreq>weekly</changefreq>
-    <priority>1.0</priority>
+    <priority>1.0</priority> <!-- Homepage is most important -->
   </url>
   <url>
     <loc>https://card-agent-virid.vercel.app/register</loc>
-    <lastmod>2026-07-07</lastmod>
+    <lastmod>2026-07-09</lastmod> <!-- Update to today's date -->
     <changefreq>weekly</changefreq>
-    <priority>1.0</priority>
+    <priority>0.9</priority> <!-- Slightly lower than homepage -->
   </url>
   <url>
     <loc>https://card-agent-virid.vercel.app/login</loc>
-    <lastmod>2026-07-07</lastmod>
+    <lastmod>2026-07-09</lastmod> <!-- Update to today's date -->
     <changefreq>weekly</changefreq>
-    <priority>1.0</priority>
+    <priority>0.8</priority> <!-- Lower priority than register -->
   </url>
-  <!-- Add other public pages here -->
 </urlset>
